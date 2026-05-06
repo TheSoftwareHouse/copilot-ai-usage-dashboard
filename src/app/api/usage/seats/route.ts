@@ -3,6 +3,8 @@ import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
 import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError, escapeLikePattern } from "@/lib/api-helpers";
+import { calculateNorm, calculateSeatDeviation } from "@/lib/norm-calculation";
+import type { NormResult } from "@/lib/norm-calculation";
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -23,6 +25,89 @@ const SORT_COLUMN_MAP: Record<string, string> = {
 };
 
 export const dynamic = "force-dynamic";
+
+interface SeatRow {
+  seatId: number;
+  githubUsername: string;
+  firstName: string | null;
+  lastName: string | null;
+  department: string | null;
+  totalRequests: string;
+  totalGrossAmount: string;
+  totalNetAmount: string;
+  models: string;
+}
+
+async function enrichSeatsWithDeviation(
+  dataSource: import("typeorm").DataSource,
+  seats: SeatRow[],
+  month: number,
+  year: number,
+  norm: NormResult,
+) {
+  const seatIds = seats.map((r) => r.seatId);
+
+  const peakRows: { seatId: number; peakDay: number; peakDailyRequests: string }[] =
+    seatIds.length > 0
+      ? await dataSource.query(
+          `SELECT DISTINCT ON (sub."seatId")
+             sub."seatId",
+             sub."day" AS "peakDay",
+             sub."totalRequests" AS "peakDailyRequests"
+           FROM (
+             SELECT cu."seatId", cu."day",
+                    SUM((item->>'grossQuantity')::numeric) AS "totalRequests"
+             FROM copilot_usage cu,
+                  jsonb_array_elements(cu."usageItems") AS item
+             WHERE cu."month" = $1 AND cu."year" = $2
+               AND cu."seatId" = ANY($3)
+             GROUP BY cu."seatId", cu."day"
+           ) sub
+           ORDER BY sub."seatId", sub."totalRequests" DESC`,
+          [month, year, seatIds],
+        )
+      : [];
+
+  const peakMap = new Map<number, { peakDay: number; peakDailyRequests: number }>();
+  for (const row of peakRows) {
+    peakMap.set(row.seatId, {
+      peakDay: row.peakDay,
+      peakDailyRequests: Number(row.peakDailyRequests),
+    });
+  }
+
+  return seats.map((row) => {
+    const peak = peakMap.get(row.seatId);
+    const deviation = calculateSeatDeviation(
+      peak?.peakDailyRequests ?? null,
+      peak?.peakDay ?? null,
+      norm.normValue,
+      norm.warningThreshold,
+      norm.alertThreshold,
+    );
+
+    return {
+      seatId: row.seatId,
+      githubUsername: row.githubUsername,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      department: row.department,
+      totalRequests: Number(row.totalRequests),
+      totalGrossAmount: Number(row.totalGrossAmount),
+      totalNetAmount: Number(row.totalNetAmount),
+      models: (JSON.parse(row.models) as { model: string; requests: number; grossAmount: number; netAmount: number }[]).map((m) => ({
+        model: m.model,
+        requests: Number(m.requests),
+        grossAmount: Number(m.grossAmount),
+        netAmount: Number(m.netAmount),
+      })),
+      deviationLevel: deviation.deviationLevel,
+      normValue: norm.normValue,
+      peakMultiplier: deviation.peakMultiplier,
+      peakDay: deviation.peakDay,
+    };
+  });
+}
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth();
@@ -61,6 +146,7 @@ export async function GET(request: NextRequest) {
 
     const dataSource = await getDb();
     const premiumRequestsPerSeat = await getPremiumAllowance();
+    const norm = await calculateNorm(month, year);
 
     // Build optional search filter
     if (searchParam) {
@@ -100,17 +186,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Main query with search filter
-      const rows: {
-        seatId: number;
-        githubUsername: string;
-        firstName: string | null;
-        lastName: string | null;
-        department: string | null;
-        totalRequests: string;
-        totalGrossAmount: string;
-        totalNetAmount: string;
-        models: string;
-      }[] = await dataSource.query(
+      const rows: SeatRow[] = await dataSource.query(
         `WITH seat_models AS (
            SELECT
              cu."seatId",
@@ -157,22 +233,7 @@ export async function GET(request: NextRequest) {
         [month, year, likePattern, pageSize, offset],
       );
 
-      const seats = rows.map((row) => ({
-        seatId: row.seatId,
-        githubUsername: row.githubUsername,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        department: row.department,
-        totalRequests: Number(row.totalRequests),
-        totalGrossAmount: Number(row.totalGrossAmount),
-        totalNetAmount: Number(row.totalNetAmount),
-        models: (JSON.parse(row.models) as { model: string; requests: number; grossAmount: number; netAmount: number }[]).map((m) => ({
-          model: m.model,
-          requests: Number(m.requests),
-          grossAmount: Number(m.grossAmount),
-          netAmount: Number(m.netAmount),
-        })),
-      }));
+      const seats = await enrichSeatsWithDeviation(dataSource, rows, month, year, norm);
 
       return NextResponse.json({
         seats,
@@ -213,17 +274,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Aggregate per-seat per-model usage, then roll up to per-seat totals
-    const rows: {
-      seatId: number;
-      githubUsername: string;
-      firstName: string | null;
-      lastName: string | null;
-      department: string | null;
-      totalRequests: string;
-      totalGrossAmount: string;
-      totalNetAmount: string;
-      models: string;
-    }[] = await dataSource.query(
+    const rows: SeatRow[] = await dataSource.query(
       `WITH seat_models AS (
          SELECT
            cu."seatId",
@@ -270,22 +321,7 @@ export async function GET(request: NextRequest) {
       [month, year, pageSize, offset],
     );
 
-    const seats = rows.map((row) => ({
-      seatId: row.seatId,
-      githubUsername: row.githubUsername,
-      firstName: row.firstName,
-      lastName: row.lastName,
-      department: row.department,
-      totalRequests: Number(row.totalRequests),
-      totalGrossAmount: Number(row.totalGrossAmount),
-      totalNetAmount: Number(row.totalNetAmount),
-      models: (JSON.parse(row.models) as { model: string; requests: number; grossAmount: number; netAmount: number }[]).map((m) => ({
-        model: m.model,
-        requests: Number(m.requests),
-        grossAmount: Number(m.grossAmount),
-        netAmount: Number(m.netAmount),
-      })),
-    }));
+    const seats = await enrichSeatsWithDeviation(dataSource, rows, month, year, norm);
 
     return NextResponse.json({
       seats,

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MONTH_NAMES } from "@/lib/constants";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
@@ -42,6 +43,7 @@ export default function ModelUsageDetail({
   year,
   day,
 }: ModelUsageDetailProps) {
+  const router = useRouter();
   const [data, setData] = useState<ModelDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +250,9 @@ export default function ModelUsageDetail({
                 {sortedUsers.map((user) => (
                   <tr
                     key={user.seatId}
-                    className="border-b border-gray-100 last:border-0"
+                    className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50"
+                    role="link"
+                    onClick={() => router.push(`/usage/seats/${user.seatId}?month=${data.month}&year=${data.year}`)}
                   >
                     <td className="px-6 py-3 text-gray-900">
                       {user.githubUsername}

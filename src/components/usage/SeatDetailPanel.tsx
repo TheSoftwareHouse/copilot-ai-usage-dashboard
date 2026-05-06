@@ -11,6 +11,7 @@ import { MONTH_NAMES } from "@/lib/constants";
 import { calcUsagePercent } from "@/lib/usage-helpers";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths";
+import TelemetryUsageCharts from "@/components/dashboard/TelemetryUsageCharts";
 
 interface SeatInfo {
   seatId: number;
@@ -30,6 +31,7 @@ interface DailyUsageEntry {
   day: number;
   totalRequests: number;
   grossAmount: number;
+  deviation?: { level: "none" | "warning" | "alert"; multiplier: number };
 }
 
 interface ModelBreakdownEntry {
@@ -54,6 +56,7 @@ interface SeatDetailResponse {
   month: number;
   year: number;
   premiumRequestsPerSeat?: number;
+  normValue: number | null;
 }
 
 interface SeatDetailPanelProps {
@@ -235,6 +238,14 @@ export default function SeatDetailPanel({
         </div>
       ) : (
         <>
+          {data.normValue === null && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4" role="status">
+              <p className="text-sm text-blue-700">
+                Usage norm unavailable — insufficient seat data for calculation
+              </p>
+            </div>
+          )}
+
           {/* Summary Cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
@@ -264,6 +275,7 @@ export default function SeatDetailPanel({
               <SeatDailyChart
                 dailyUsage={dailyUsage}
                 daysInMonth={daysInMonth}
+                normValue={data.normValue}
               />
             </div>
           </div>
@@ -277,6 +289,8 @@ export default function SeatDetailPanel({
               <SeatModelTable models={modelBreakdown} />
             </div>
           </div>
+
+          <TelemetryUsageCharts month={month} year={year} githubUsername={seat.githubUsername} />
         </>
       )}
     </div>

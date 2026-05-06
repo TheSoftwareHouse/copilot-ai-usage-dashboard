@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { calcUsagePercent } from "@/lib/usage-helpers";
 import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
+import DeviationIcon from "@/components/shared/DeviationIcon";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
 import type { SeatUsageEntry } from "@/components/usage/SeatUsagePanel";
@@ -65,6 +66,12 @@ export default function SeatUsageTable({ seats, month, year, premiumRequestsPerS
                 >
                   <span className="inline-flex items-center gap-2">
                     <UsageStatusIndicator percent={rawPercent} />
+                    {seat.deviationLevel !== "none" && seat.normValue !== null && (
+                      <DeviationIcon
+                        level={seat.deviationLevel}
+                        tooltipText={`${seat.deviationLevel === "alert" ? "Alert" : "Warning"}: ${seat.peakMultiplier?.toFixed(1)}x norm on Day ${seat.peakDay}`}
+                      />
+                    )}
                     {seat.githubUsername}
                   </span>
                 </Link>

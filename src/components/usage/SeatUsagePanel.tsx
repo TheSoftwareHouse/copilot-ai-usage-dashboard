@@ -25,6 +25,10 @@ export interface SeatUsageEntry {
   totalGrossAmount: number;
   totalNetAmount: number;
   models: ModelEntry[];
+  deviationLevel: "none" | "warning" | "alert";
+  normValue: number | null;
+  peakMultiplier: number | null;
+  peakDay: number | null;
 }
 
 interface SeatUsageResponse {

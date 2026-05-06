@@ -472,4 +472,158 @@ test.describe("Configuration Settings Page", () => {
       page.getByRole("alert").filter({ hasText: "Go to Settings" })
     ).not.toBeVisible();
   });
+
+  test("displays norm settings fields with default values", async ({
+    page,
+  }) => {
+    await page.goto("/management?tab=configuration");
+
+    // Verify the Usage Norm Settings heading is visible
+    await expect(
+      page.getByRole("heading", { name: /usage norm settings/i })
+    ).toBeVisible();
+
+    // Verify norm seats count input with default value 30
+    const normSeats = page.getByRole("spinbutton", {
+      name: /norm seats count/i,
+    });
+    await expect(normSeats).toBeVisible();
+    await expect(normSeats).toHaveValue("30");
+
+    // Verify warning threshold input with default value 1.5
+    const warningThreshold = page.getByRole("spinbutton", {
+      name: /warning threshold/i,
+    });
+    await expect(warningThreshold).toBeVisible();
+    await expect(warningThreshold).toHaveValue("1.5");
+
+    // Verify alert threshold input with default value 2
+    const alertThreshold = page.getByRole("spinbutton", {
+      name: /alert threshold/i,
+    });
+    await expect(alertThreshold).toBeVisible();
+    await expect(alertThreshold).toHaveValue("2");
+  });
+
+  test("updates norm seats count and persists the value after reload", async ({
+    page,
+  }) => {
+    await page.goto("/management?tab=configuration");
+
+    const input = page.getByRole("spinbutton", {
+      name: /norm seats count/i,
+    });
+    await input.fill("50");
+    await expect(input).toHaveValue("50");
+
+    const [putResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/configuration") &&
+          resp.request().method() === "PUT",
+      ),
+      page.getByRole("button", { name: /update configuration/i }).click(),
+    ]);
+    expect(putResponse.status()).toBe(200);
+
+    await expect(
+      page.getByText(/configuration updated successfully/i)
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(
+      page.getByRole("spinbutton", { name: /norm seats count/i })
+    ).toHaveValue("50");
+  });
+
+  test("updates warning threshold and persists the value after reload", async ({
+    page,
+  }) => {
+    await page.goto("/management?tab=configuration");
+
+    const input = page.getByRole("spinbutton", {
+      name: /warning threshold/i,
+    });
+    await input.fill("1.75");
+    await expect(input).toHaveValue("1.75");
+
+    const [putResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/configuration") &&
+          resp.request().method() === "PUT",
+      ),
+      page.getByRole("button", { name: /update configuration/i }).click(),
+    ]);
+    expect(putResponse.status()).toBe(200);
+
+    await expect(
+      page.getByText(/configuration updated successfully/i)
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(
+      page.getByRole("spinbutton", { name: /warning threshold/i })
+    ).toHaveValue("1.75");
+  });
+
+  test("updates alert threshold and persists the value after reload", async ({
+    page,
+  }) => {
+    await page.goto("/management?tab=configuration");
+
+    const input = page.getByRole("spinbutton", {
+      name: /alert threshold/i,
+    });
+    await input.fill("3.5");
+    await expect(input).toHaveValue("3.5");
+
+    const [putResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/configuration") &&
+          resp.request().method() === "PUT",
+      ),
+      page.getByRole("button", { name: /update configuration/i }).click(),
+    ]);
+    expect(putResponse.status()).toBe(200);
+
+    await expect(
+      page.getByText(/configuration updated successfully/i)
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(
+      page.getByRole("spinbutton", { name: /alert threshold/i })
+    ).toHaveValue("3.5");
+  });
+
+  test("displays validation error when warning threshold >= alert threshold", async ({
+    page,
+  }) => {
+    await page.goto("/management?tab=configuration");
+
+    // Set warning threshold higher than default alert threshold (2)
+    const warningInput = page.getByRole("spinbutton", {
+      name: /warning threshold/i,
+    });
+    await warningInput.fill("2.5");
+
+    const [putResponse] = await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/configuration") &&
+          resp.request().method() === "PUT",
+      ),
+      page.getByRole("button", { name: /update configuration/i }).click(),
+    ]);
+    expect(putResponse.status()).toBe(400);
+
+    // Verify cross-field validation error is displayed
+    await expect(
+      page.getByRole("alert").filter({
+        hasText: /warning threshold must be less than alert threshold/i,
+      })
+    ).toBeVisible();
+  });
 });

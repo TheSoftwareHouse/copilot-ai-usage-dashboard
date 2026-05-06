@@ -4,10 +4,11 @@ import { DataSource } from "typeorm";
 import { NextRequest } from "next/server";
 import { CopilotSeatEntity, type CopilotSeat } from "@/entities/copilot-seat.entity";
 import { CopilotUsageEntity, type CopilotUsage } from "@/entities/copilot-usage.entity";
-import { SeatStatus } from "@/entities/enums";
+import { SeatStatus, ApiMode } from "@/entities/enums";
 import { TeamEntity, type Team } from "@/entities/team.entity";
 import { TeamMemberSnapshotEntity } from "@/entities/team-member-snapshot.entity";
 import { DepartmentEntity } from "@/entities/department.entity";
+import { ConfigurationEntity, type Configuration } from "@/entities/configuration.entity";
 import {
   getTestDataSource,
   cleanDatabase,
@@ -90,6 +91,13 @@ async function seedTeam(name: string, overrides?: Partial<Team>) {
 async function seedTeamMemberSnapshot(teamId: number, seatId: number, month: number, year: number) {
   const repo = testDs.getRepository(TeamMemberSnapshotEntity);
   return repo.save(repo.create({ teamId, seatId, month, year }));
+}
+
+async function seedConfiguration(
+  overrides: Partial<Configuration> & { entityName: string; apiMode: ApiMode },
+): Promise<Configuration> {
+  const repo = testDs.getRepository(ConfigurationEntity);
+  return repo.save(repo.create(overrides));
 }
 
 describe("GET /api/usage/seats/[seatId]", () => {
@@ -489,5 +497,349 @@ describe("GET /api/usage/seats/[seatId]", () => {
     expect(json.premiumRequestsPerSeat).toBeDefined();
     expect(typeof json.premiumRequestsPerSeat).toBe("number");
     expect(json.premiumRequestsPerSeat).toBeGreaterThan(0);
+  });
+
+  describe("norm deviation data", () => {
+    // Helper to seed previous month usage for norm baseline
+    // Viewing month=3, year=2026 → norm based on month=2, year=2026
+    const VIEW_MONTH = 3;
+    const VIEW_YEAR = 2026;
+    const PREV_MONTH = 2;
+    const PREV_YEAR = 2026;
+    // February 2026 has 28 days
+
+    async function seedNormBaseline() {
+      // Config: normSeatsCount=2, warningThreshold=1.5, alertThreshold=2.0
+      await seedConfiguration({
+        entityName: "test-org",
+        apiMode: ApiMode.ORGANISATION,
+        normSeatsCount: 2,
+        deviationWarningThreshold: 1.5,
+        deviationAlertThreshold: 2.0,
+      });
+
+      // Seed two seats with previous month usage to establish a norm
+      const seatA = await seedSeat({ githubUsername: "norm-seat-a", githubUserId: 7001 });
+      const seatB = await seedSeat({ githubUsername: "norm-seat-b", githubUserId: 7002 });
+
+      // seatA: 280 total requests in previous month (10 requests/day × 28 days)
+      for (let d = 1; d <= 28; d++) {
+        await seedUsage({
+          seatId: seatA.id,
+          day: d,
+          month: PREV_MONTH,
+          year: PREV_YEAR,
+          usageItems: [
+            { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 },
+          ],
+        });
+      }
+
+      // seatB: 560 total requests in previous month (20 requests/day × 28 days)
+      for (let d = 1; d <= 28; d++) {
+        await seedUsage({
+          seatId: seatB.id,
+          day: d,
+          month: PREV_MONTH,
+          year: PREV_YEAR,
+          usageItems: [
+            { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 20, grossAmount: 0.8, discountQuantity: 0, discountAmount: 0, netQuantity: 20, netAmount: 0.8 },
+          ],
+        });
+      }
+
+      // Norm = (280 + 560) / 2 / 28 = 840 / 2 / 28 = 15
+      return { seatA, seatB };
+    }
+
+    it("response includes normValue as a number when previous month data exists", async () => {
+      await seedAuthSession();
+      const { seatA } = await seedNormBaseline();
+
+      // Seed current month usage for seatA
+      await seedUsage({
+        seatId: seatA.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seatA.id)) as never);
+      expect(response.status).toBe(200);
+      const json = await response.json();
+
+      expect(typeof json.normValue).toBe("number");
+      expect(json.normValue).toBeCloseTo(15, 2);
+    });
+
+    it("response includes normValue: null when no previous month data exists", async () => {
+      await seedAuthSession();
+      // Config exists but no previous month usage data
+      await seedConfiguration({
+        entityName: "test-org",
+        apiMode: ApiMode.ORGANISATION,
+        normSeatsCount: 2,
+        deviationWarningThreshold: 1.5,
+        deviationAlertThreshold: 2.0,
+      });
+
+      const seat = await seedSeat({ githubUsername: "no-prev-user", githubUserId: 7010 });
+
+      await seedUsage({
+        seatId: seat.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seat.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seat.id)) as never);
+      expect(response.status).toBe(200);
+      const json = await response.json();
+
+      expect(json.normValue).toBeNull();
+    });
+
+    it("daily usage entries include deviation object with level and multiplier", async () => {
+      await seedAuthSession();
+      const { seatA } = await seedNormBaseline();
+
+      await seedUsage({
+        seatId: seatA.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seatA.id)) as never);
+      const json = await response.json();
+
+      expect(json.dailyUsage).toHaveLength(1);
+      expect(json.dailyUsage[0].deviation).toBeDefined();
+      expect(json.dailyUsage[0].deviation).toHaveProperty("level");
+      expect(json.dailyUsage[0].deviation).toHaveProperty("multiplier");
+    });
+
+    it("day above alert threshold returns deviation.level === 'alert' with correct multiplier", async () => {
+      await seedAuthSession();
+      const { seatA } = await seedNormBaseline();
+
+      // Norm = 15, alertThreshold = 2.0, so alert at >= 30 requests
+      // 40 requests → multiplier = 40/15 ≈ 2.667
+      await seedUsage({
+        seatId: seatA.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 40, grossAmount: 1.6, discountQuantity: 0, discountAmount: 0, netQuantity: 40, netAmount: 1.6 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seatA.id)) as never);
+      const json = await response.json();
+
+      expect(json.dailyUsage[0].deviation.level).toBe("alert");
+      expect(json.dailyUsage[0].deviation.multiplier).toBeCloseTo(40 / 15, 2);
+    });
+
+    it("day above warning threshold (but below alert) returns deviation.level === 'warning'", async () => {
+      await seedAuthSession();
+      const { seatA } = await seedNormBaseline();
+
+      // Norm = 15, warningThreshold = 1.5 → warning at >= 22.5, alertThreshold = 2.0 → alert at >= 30
+      // 25 requests → multiplier = 25/15 ≈ 1.667
+      await seedUsage({
+        seatId: seatA.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 25, grossAmount: 1.0, discountQuantity: 0, discountAmount: 0, netQuantity: 25, netAmount: 1.0 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seatA.id)) as never);
+      const json = await response.json();
+
+      expect(json.dailyUsage[0].deviation.level).toBe("warning");
+      expect(json.dailyUsage[0].deviation.multiplier).toBeCloseTo(25 / 15, 2);
+    });
+
+    it("normal day returns deviation.level === 'none'", async () => {
+      await seedAuthSession();
+      const { seatA } = await seedNormBaseline();
+
+      // Norm = 15, 10 requests → multiplier = 10/15 ≈ 0.667 (below warning 1.5)
+      await seedUsage({
+        seatId: seatA.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seatA.id)) as never);
+      const json = await response.json();
+
+      expect(json.dailyUsage[0].deviation.level).toBe("none");
+      expect(json.dailyUsage[0].deviation.multiplier).toBeCloseTo(10 / 15, 2);
+    });
+
+    it("day with zero usage returns deviation.level === 'none' regardless of norm", async () => {
+      await seedAuthSession();
+      const { seatA } = await seedNormBaseline();
+
+      // Seed a day with 0 grossQuantity
+      await seedUsage({
+        seatId: seatA.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 0, grossAmount: 0, discountQuantity: 0, discountAmount: 0, netQuantity: 0, netAmount: 0 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seatA.id)) as never);
+      const json = await response.json();
+
+      // The daily query groups by day with SUM — a 0 grossQuantity day will appear with totalRequests=0
+      if (json.dailyUsage.length > 0) {
+        const zeroDay = json.dailyUsage.find((d: { totalRequests: number }) => d.totalRequests === 0);
+        if (zeroDay) {
+          expect(zeroDay.deviation.level).toBe("none");
+          expect(zeroDay.deviation.multiplier).toBe(0);
+        }
+      }
+    });
+
+    it("all days have deviation.level === 'none' when normValue is null", async () => {
+      await seedAuthSession();
+      // No previous month data → normValue = null
+      await seedConfiguration({
+        entityName: "test-org",
+        apiMode: ApiMode.ORGANISATION,
+        normSeatsCount: 2,
+        deviationWarningThreshold: 1.5,
+        deviationAlertThreshold: 2.0,
+      });
+
+      const seat = await seedSeat({ githubUsername: "null-norm-user", githubUserId: 7020 });
+
+      await seedUsage({
+        seatId: seat.id,
+        day: 1,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 100, grossAmount: 4.0, discountQuantity: 0, discountAmount: 0, netQuantity: 100, netAmount: 4.0 },
+        ],
+      });
+
+      await seedUsage({
+        seatId: seat.id,
+        day: 2,
+        month: VIEW_MONTH,
+        year: VIEW_YEAR,
+        usageItems: [
+          { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 200, grossAmount: 8.0, discountQuantity: 0, discountAmount: 0, netQuantity: 200, netAmount: 8.0 },
+        ],
+      });
+
+      const request = makeGetRequest(String(seat.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response = await GET(request as never, makeContext(String(seat.id)) as never);
+      const json = await response.json();
+
+      expect(json.normValue).toBeNull();
+      expect(json.dailyUsage).toHaveLength(2);
+      for (const day of json.dailyUsage) {
+        expect(day.deviation.level).toBe("none");
+        expect(day.deviation.multiplier).toBe(0);
+      }
+    });
+
+    it("norm recalculates when configuration normSeatsCount changes", async () => {
+      await seedAuthSession();
+
+      // Seed 3 seats with different previous month usage
+      await seedConfiguration({
+        entityName: "test-org",
+        apiMode: ApiMode.ORGANISATION,
+        normSeatsCount: 2,
+        deviationWarningThreshold: 1.5,
+        deviationAlertThreshold: 2.0,
+      });
+
+      const seatA = await seedSeat({ githubUsername: "reconfig-a", githubUserId: 7030 });
+      const seatB = await seedSeat({ githubUsername: "reconfig-b", githubUserId: 7031 });
+      const seatC = await seedSeat({ githubUsername: "reconfig-c", githubUserId: 7032 });
+
+      // seatA: 280 total (10/day × 28 days)
+      for (let d = 1; d <= 28; d++) {
+        await seedUsage({
+          seatId: seatA.id, day: d, month: PREV_MONTH, year: PREV_YEAR,
+          usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 }],
+        });
+      }
+
+      // seatB: 560 total (20/day × 28 days)
+      for (let d = 1; d <= 28; d++) {
+        await seedUsage({
+          seatId: seatB.id, day: d, month: PREV_MONTH, year: PREV_YEAR,
+          usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 20, grossAmount: 0.8, discountQuantity: 0, discountAmount: 0, netQuantity: 20, netAmount: 0.8 }],
+        });
+      }
+
+      // seatC: 140 total (5/day × 28 days)
+      for (let d = 1; d <= 28; d++) {
+        await seedUsage({
+          seatId: seatC.id, day: d, month: PREV_MONTH, year: PREV_YEAR,
+          usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 5, grossAmount: 0.2, discountQuantity: 0, discountAmount: 0, netQuantity: 5, netAmount: 0.2 }],
+        });
+      }
+
+      // Seed current month usage for seatA
+      await seedUsage({
+        seatId: seatA.id, day: 1, month: VIEW_MONTH, year: VIEW_YEAR,
+        usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 10, grossAmount: 0.4, discountQuantity: 0, discountAmount: 0, netQuantity: 10, netAmount: 0.4 }],
+      });
+
+      // With normSeatsCount=2: top 2 are seatB(560) + seatA(280) = 840
+      // norm = 840 / 2 / 28 = 15
+      const request1 = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response1 = await GET(request1 as never, makeContext(String(seatA.id)) as never);
+      const json1 = await response1.json();
+      expect(json1.normValue).toBeCloseTo(15, 2);
+
+      // Update config to normSeatsCount=3
+      const configRepo = testDs.getRepository(ConfigurationEntity);
+      const existingConfig = await configRepo.findOne({ where: {} });
+      await configRepo.update(existingConfig!.id, { normSeatsCount: 3 });
+
+      // With normSeatsCount=3: top 3 are seatB(560) + seatA(280) + seatC(140) = 980
+      // norm = 980 / 3 / 28 ≈ 11.667
+      const request2 = makeGetRequest(String(seatA.id), { month: String(VIEW_MONTH), year: String(VIEW_YEAR) });
+      const response2 = await GET(request2 as never, makeContext(String(seatA.id)) as never);
+      const json2 = await response2.json();
+      expect(json2.normValue).toBeCloseTo(980 / 3 / 28, 2);
+    });
   });
 });

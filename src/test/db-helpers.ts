@@ -10,6 +10,7 @@ import { TeamEntity } from "@/entities/team.entity";
 import { TeamMemberSnapshotEntity } from "@/entities/team-member-snapshot.entity";
 import { DepartmentEntity } from "@/entities/department.entity";
 import { GitHubAppEntity } from "@/entities/github-app.entity";
+import { TelemetryEventEntity } from "@/entities/telemetry-event.entity";
 
 let testDataSource: DataSource | undefined;
 
@@ -35,7 +36,7 @@ export async function getTestDataSource(): Promise<DataSource> {
     username: decodeURIComponent(parsed.username),
     password: decodeURIComponent(parsed.password),
     database: parsed.pathname.replace("/", ""),
-    entities: [ConfigurationEntity, CopilotSeatEntity, CopilotUsageEntity, JobExecutionEntity, UserEntity, SessionEntity, DashboardMonthlySummaryEntity, TeamEntity, TeamMemberSnapshotEntity, DepartmentEntity, GitHubAppEntity],
+    entities: [ConfigurationEntity, CopilotSeatEntity, CopilotUsageEntity, JobExecutionEntity, UserEntity, SessionEntity, DashboardMonthlySummaryEntity, TeamEntity, TeamMemberSnapshotEntity, DepartmentEntity, GitHubAppEntity, TelemetryEventEntity],
     synchronize: true,
     logging: false,
   });
@@ -53,7 +54,7 @@ export async function cleanDatabase(ds: DataSource): Promise<void> {
   await sessionRepository.clear();
   const userRepository = ds.getRepository(UserEntity);
   await userRepository.clear();
-  await ds.query('TRUNCATE TABLE team_member_snapshot, team, department, copilot_usage, copilot_seat CASCADE');
+  await ds.query('TRUNCATE TABLE telemetry_event, team_member_snapshot, team, department, copilot_usage, copilot_seat CASCADE');
   const summaryRepository = ds.getRepository(DashboardMonthlySummaryEntity);
   await summaryRepository.clear();
   const configRepository = ds.getRepository(ConfigurationEntity);

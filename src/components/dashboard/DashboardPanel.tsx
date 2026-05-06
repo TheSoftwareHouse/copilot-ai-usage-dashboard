@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { calcUsagePercent, getAllowanceThresholdColor, calcAllowanceTrend } from "@/lib/usage-helpers";
 import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
 import DashboardDailyChart from "@/components/dashboard/DashboardDailyChart";
+import TelemetryUsageCharts from "@/components/dashboard/TelemetryUsageCharts";
+import TopSpendingsChart from "@/components/dashboard/TopSpendingsChart";
 
 interface ModelUsageEntry {
   model: string;
@@ -19,6 +21,14 @@ interface UserActivityEntry {
   firstName: string | null;
   lastName: string | null;
   totalRequests: number;
+  totalSpending: number;
+}
+
+interface TopDailySpendingEntry {
+  seatId: number;
+  githubUsername: string;
+  displayName: string;
+  day: number;
   totalSpending: number;
 }
 
@@ -39,6 +49,7 @@ interface DashboardData {
   previousIncludedPremiumRequestsUsed: number | null;
   dailyUsage: Array<{ day: number; totalRequests: number }>;
   previousDailyUsage: Array<{ day: number; totalRequests: number }>;
+  topDailySpendings: TopDailySpendingEntry[];
   month: number;
   year: number;
 }
@@ -150,6 +161,10 @@ export default function DashboardPanel({ month, year }: DashboardPanelProps) {
 
   const handleBarClick = (day: number, clickMonth: number, clickYear: number) => {
     router.push(`/dashboard/daily/${day}?month=${clickMonth}&year=${clickYear}`);
+  };
+
+  const handleSpendingBarClick = (seatId: number) => {
+    router.push(`/usage/seats/${seatId}?month=${data.month}&year=${data.year}`);
   };
 
   if (isEmpty) {
@@ -319,6 +334,29 @@ export default function DashboardPanel({ month, year }: DashboardPanelProps) {
           </div>
         </div>
       </div>
+
+      {/* Top Daily Spendings */}
+      <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-200 px-6 py-4">
+          <h2 className="text-lg font-semibold text-gray-900">
+            Top Daily Spendings
+          </h2>
+        </div>
+        <div className="p-6">
+          {data.topDailySpendings.length > 0 ? (
+            <TopSpendingsChart
+              data={data.topDailySpendings}
+              month={data.month}
+              onBarClick={handleSpendingBarClick}
+            />
+          ) : (
+            <p className="text-sm text-gray-500">No spending data available</p>
+          )}
+        </div>
+      </div>
+
+      {/* Telemetry: Agent & Prompt Usage */}
+      <TelemetryUsageCharts month={data.month} year={data.year} />
 
       {/* Model Usage Breakdown */}
       {data.modelUsage.length > 0 && (

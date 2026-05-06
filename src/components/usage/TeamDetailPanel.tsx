@@ -9,6 +9,7 @@ import { UsageProgressBar } from "@/components/usage/UsageProgressBar";
 import { MONTH_NAMES } from "@/lib/constants";
 import { formatCurrency } from "@/lib/format-helpers";
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths";
+import TelemetryUsageCharts from "@/components/dashboard/TelemetryUsageCharts";
 import { memberMatchesSearch } from "@/lib/usage-helpers";
 import type { MemberEntry } from "@/lib/types";
 
@@ -280,6 +281,8 @@ export default function TeamDetailPanel({
               </div>
             </div>
           )}
+
+          <TelemetryUsageCharts month={month} year={year} teamId={teamId} />
         </>
       )}
     </div>

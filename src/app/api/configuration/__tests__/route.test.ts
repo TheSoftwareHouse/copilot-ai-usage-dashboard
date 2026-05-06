@@ -140,6 +140,43 @@ describe("GET /api/configuration", () => {
     const json = await response.json();
     expect(json.premiumRequestsPerSeat).toBe(300);
   });
+
+  it("returns norm fields with default values", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.normSeatsCount).toBe(30);
+    expect(json.deviationWarningThreshold).toBe(1.5);
+    expect(json.deviationAlertThreshold).toBe(2.0);
+  });
+
+  it("returns norm threshold fields as numbers, not strings", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(typeof json.deviationWarningThreshold).toBe("number");
+    expect(typeof json.deviationAlertThreshold).toBe("number");
+  });
 });
 
 describe("POST /api/configuration", () => {
@@ -534,5 +571,218 @@ describe("PUT /api/configuration", () => {
 
     const response = await PUT(request);
     expect(response.status).toBe(400);
+  });
+
+  it("updates normSeatsCount successfully", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      normSeatsCount: 50,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.normSeatsCount).toBe(50);
+  });
+
+  it("updates deviationWarningThreshold successfully", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      deviationWarningThreshold: 1.75,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.deviationWarningThreshold).toBe(1.75);
+  });
+
+  it("updates deviationAlertThreshold successfully", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      deviationAlertThreshold: 3.0,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.deviationAlertThreshold).toBe(3.0);
+  });
+
+  it("updates all three norm fields in a single request", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      normSeatsCount: 100,
+      deviationWarningThreshold: 1.25,
+      deviationAlertThreshold: 3.5,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.normSeatsCount).toBe(100);
+    expect(json.deviationWarningThreshold).toBe(1.25);
+    expect(json.deviationAlertThreshold).toBe(3.5);
+  });
+
+  it("returns 400 for normSeatsCount of 0", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      normSeatsCount: 0,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(400);
+
+    const json = await response.json();
+    expect(json.error).toBe("Validation failed");
+  });
+
+  it("returns 400 for deviationWarningThreshold of 1.0", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      deviationWarningThreshold: 1.0,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(400);
+
+    const json = await response.json();
+    expect(json.error).toBe("Validation failed");
+  });
+
+  it("returns 400 when warning threshold >= alert threshold", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      deviationWarningThreshold: 3.0,
+      deviationAlertThreshold: 2.0,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(400);
+
+    const json = await response.json();
+    expect(json.error).toBe(
+      "Warning threshold must be less than alert threshold"
+    );
+  });
+
+  it("returns 400 for cross-field validation with partial update exceeding existing alert", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    // Default alert threshold is 2.0
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+    });
+
+    // Send only warning threshold that exceeds existing alert threshold (2.0)
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      deviationWarningThreshold: 2.5,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(400);
+
+    const json = await response.json();
+    expect(json.error).toBe(
+      "Warning threshold must be less than alert threshold"
+    );
+  });
+
+  it("partial update of normSeatsCount does not reset threshold fields", async () => {
+    const { ConfigurationEntity } = await import(
+      "@/entities/configuration.entity"
+    );
+    const repo = testDs.getRepository(ConfigurationEntity);
+    await repo.save({
+      apiMode: ApiMode.ORGANISATION,
+      entityName: "TestOrg",
+      deviationWarningThreshold: 1.75,
+      deviationAlertThreshold: 3.0,
+    });
+
+    const request = makeRequest("PUT", {
+      premiumRequestsPerSeat: 300,
+      normSeatsCount: 50,
+    });
+
+    const response = await PUT(request);
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.normSeatsCount).toBe(50);
+    expect(json.deviationWarningThreshold).toBe(1.75);
+    expect(json.deviationAlertThreshold).toBe(3.0);
   });
 });

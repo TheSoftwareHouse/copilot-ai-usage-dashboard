@@ -9,6 +9,7 @@ import { TeamEntity } from "../entities/team.entity";
 import { TeamMemberSnapshotEntity } from "../entities/team-member-snapshot.entity";
 import { DepartmentEntity } from "../entities/department.entity";
 import { GitHubAppEntity } from "../entities/github-app.entity";
+import { TelemetryEventEntity } from "../entities/telemetry-event.entity";
 
 export const allEntities = [
   ConfigurationEntity,
@@ -22,6 +23,7 @@ export const allEntities = [
   TeamMemberSnapshotEntity,
   DepartmentEntity,
   GitHubAppEntity,
+  TelemetryEventEntity,
 ];
 
 export function parseConnectionString(url: string) {

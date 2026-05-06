@@ -4,6 +4,7 @@ import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
 import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
+import { calculateNorm, calculateDeviation } from "@/lib/norm-calculation";
 
 type RouteContext = { params: Promise<{ seatId: string }> };
 
@@ -62,11 +63,23 @@ export async function GET(request: NextRequest, context: RouteContext) {
         [seatId, month, year],
       );
 
-    const dailyUsage = dailyRows.map((row) => ({
-      day: row.day,
-      totalRequests: Number(row.totalRequests),
-      grossAmount: Number(row.grossAmount),
-    }));
+    const { normValue, warningThreshold, alertThreshold } =
+      await calculateNorm(month, year);
+
+    const dailyUsage = dailyRows.map((row) => {
+      const totalRequests = Number(row.totalRequests);
+      return {
+        day: row.day,
+        totalRequests,
+        grossAmount: Number(row.grossAmount),
+        deviation: calculateDeviation(
+          totalRequests,
+          normValue,
+          warningThreshold,
+          alertThreshold,
+        ),
+      };
+    });
 
     // Model breakdown aggregation: SUM per model
     const modelRows: { model: string; totalRequests: string; grossAmount: string; netAmount: string }[] =
@@ -143,6 +156,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       month,
       year,
       premiumRequestsPerSeat,
+      normValue,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/usage/seats/[seatId]");

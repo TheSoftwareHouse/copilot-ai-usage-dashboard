@@ -4,6 +4,7 @@ import { DashboardMonthlySummaryEntity } from "@/entities/dashboard-monthly-summ
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
 import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
+import { formatName } from "@/lib/format-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +88,39 @@ export async function GET(request: NextRequest) {
         totalRequests: Number(row.totalRequests),
       }));
 
+      const topDailySpendingRows: {
+        seatId: number;
+        githubUsername: string;
+        firstName: string | null;
+        lastName: string | null;
+        day: number;
+        totalSpending: string;
+      }[] = await dataSource.query(
+        `SELECT
+           cs."id" AS "seatId",
+           cs."githubUsername",
+           cs."firstName",
+           cs."lastName",
+           cu."day",
+           SUM((item->>'netAmount')::numeric) AS "totalSpending"
+         FROM copilot_usage cu
+           JOIN copilot_seat cs ON cu."seatId" = cs."id",
+           jsonb_array_elements(cu."usageItems") AS item
+         WHERE cu."month" = $1 AND cu."year" = $2
+         GROUP BY cs."id", cs."githubUsername", cs."firstName", cs."lastName", cu."day"
+         ORDER BY "totalSpending" DESC
+         LIMIT 10`,
+        [month, year],
+      );
+
+      const topDailySpendings = topDailySpendingRows.map((row) => ({
+        seatId: row.seatId,
+        githubUsername: row.githubUsername,
+        displayName: formatName(row.firstName, row.lastName, row.githubUsername),
+        day: row.day,
+        totalSpending: Number(row.totalSpending),
+      }));
+
       return NextResponse.json({
         totalSeats: summary.totalSeats,
         activeSeats: summary.activeSeats,
@@ -105,6 +139,7 @@ export async function GET(request: NextRequest) {
         previousIncludedPremiumRequestsUsed,
         dailyUsage,
         previousDailyUsage,
+        topDailySpendings,
         month,
         year,
       });
@@ -129,6 +164,7 @@ export async function GET(request: NextRequest) {
       previousIncludedPremiumRequestsUsed: null,
       dailyUsage: [],
       previousDailyUsage: [],
+      topDailySpendings: [],
       month,
       year,
     });

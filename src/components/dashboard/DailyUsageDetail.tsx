@@ -256,7 +256,9 @@ export default function DailyUsageDetail({
                 {sortedUsers.map((user) => (
                   <tr
                     key={user.seatId}
-                    className="border-b border-gray-100 last:border-0"
+                    className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50"
+                    role="link"
+                    onClick={() => router.push(`/usage/seats/${user.seatId}?month=${data.month}&year=${data.year}`)}
                   >
                     <td className="px-6 py-3 text-gray-900">
                       {user.githubUsername}

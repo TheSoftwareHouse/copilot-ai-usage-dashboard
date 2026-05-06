@@ -70,6 +70,8 @@ export const TeamEntity = new EntitySchema<Team>({ name: "Team", tableName: "tea
 
 **Migration format** — `{timestamp}-{PascalCaseDescription}.ts` in `migrations/`. Raw SQL in `up()`/`down()`. Production uses `synchronize: false`.
 
+**Migration registration** — every new migration file MUST be imported and added to the `migrations` array in `scripts/run-migrations.ts`. A migration file that exists in `migrations/` but is not registered in `run-migrations.ts` will never execute. Always verify registration after creating a migration.
+
 # Component Patterns
 
 - All UI components in `src/components/` are client components — every file starts with `"use client"`.

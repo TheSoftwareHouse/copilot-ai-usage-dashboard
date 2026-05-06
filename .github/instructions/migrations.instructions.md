@@ -54,3 +54,12 @@ export class CreateTeamTables1772400000000 implements MigrationInterface {
 - Quote column names with double quotes to preserve camelCase in PostgreSQL
 - Drop in reverse order in `down()` (indices before tables, dependent tables before parent)
 - `synchronize: false` in all environments — schema changes only via migrations
+
+## Registration (CRITICAL)
+
+Every migration MUST be registered in `scripts/run-migrations.ts`:
+
+1. Import the migration class at the top of the file
+2. Add the class to the `migrations` array inside the `DataSource` configuration
+
+A migration file that exists in `migrations/` but is not registered in `run-migrations.ts` will **never execute**. Always verify registration after creating a migration.

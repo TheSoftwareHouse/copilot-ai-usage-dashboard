@@ -22,6 +22,10 @@ import { AddRefreshTokenToSession1772950000000 } from "../migrations/17729500000
 import { CreateGitHubApp1773000000000 } from "../migrations/1773000000000-CreateGitHubApp";
 import { AddInstallationIdToGitHubApp1773100000000 } from "../migrations/1773100000000-AddInstallationIdToGitHubApp";
 import { AddUserRole1773200000000 } from "../migrations/1773200000000-AddUserRole";
+import { AddTelemetryApiKey1773300000000 } from "../migrations/1773300000000-AddTelemetryApiKey";
+import { CreateTelemetryEvent1773400000000 } from "../migrations/1773400000000-CreateTelemetryEvent";
+import { AddTelemetryGithubUsername1773500000000 } from "../migrations/1773500000000-AddTelemetryGithubUsername";
+import { AddNormConfiguration1773600000000 } from "../migrations/1773600000000-AddNormConfiguration";
 
 const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 3000;
@@ -69,6 +73,10 @@ async function runMigrations(): Promise<void> {
       CreateGitHubApp1773000000000,
       AddInstallationIdToGitHubApp1773100000000,
       AddUserRole1773200000000,
+      AddTelemetryApiKey1773300000000,
+      CreateTelemetryEvent1773400000000,
+      AddTelemetryGithubUsername1773500000000,
+      AddNormConfiguration1773600000000,
     ],
     synchronize: false,
     logging: false,
