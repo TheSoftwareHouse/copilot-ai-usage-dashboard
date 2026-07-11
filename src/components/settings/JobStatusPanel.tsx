@@ -6,6 +6,7 @@ import { formatRelativeTime, formatTimestamp } from "@/lib/format-helpers";
 
 export interface JobExecutionData {
   status: string;
+  reason: string | null;
   startedAt: string;
   completedAt: string | null;
   errorMessage: string | null;
@@ -15,7 +16,6 @@ export interface JobExecutionData {
 interface JobStatusPanelProps {
   data: {
     seatSync: JobExecutionData | null;
-    usageCollection: JobExecutionData | null;
   };
 }
 
@@ -27,6 +27,21 @@ const STATUS_CONFIG: Record<
     label: "Success",
     bgClass: "bg-green-100",
     textClass: "text-green-800",
+  },
+  partial_failure: {
+    label: "Partial failure",
+    bgClass: "bg-amber-100",
+    textClass: "text-amber-800",
+  },
+  blocked: {
+    label: "Blocked",
+    bgClass: "bg-amber-100",
+    textClass: "text-amber-800",
+  },
+  no_op: {
+    label: "No-op",
+    bgClass: "bg-slate-100",
+    textClass: "text-slate-800",
   },
   failure: {
     label: "Failed",
@@ -123,6 +138,13 @@ export function JobCard({
           <div className="flex justify-between">
             <dt className="text-gray-500">Records processed</dt>
             <dd className="text-gray-900">{execution.recordsProcessed}</dd>
+          </div>
+        )}
+
+        {execution.reason && (
+          <div className="flex justify-between gap-4">
+            <dt className="text-gray-500">Reason</dt>
+            <dd className="text-right text-gray-900">{execution.reason}</dd>
           </div>
         )}
       </dl>
@@ -255,122 +277,14 @@ export function SyncNowButton({ onComplete }: { onComplete?: () => void } = {}) 
   );
 }
 
-export function CollectNowButton({ onComplete }: { onComplete?: () => void } = {}) {
-  const router = useRouter();
-  const [collecting, setCollecting] = useState(false);
-  const [message, setMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
-
-  async function handleCollect() {
-    setCollecting(true);
-    setMessage(null);
-
-    try {
-      const response = await fetch("/api/jobs/usage-collection", {
-        method: "POST",
-      });
-
-      if (response.status === 401) {
-        setMessage({
-          type: "error",
-          text: "Session expired. Please log in again.",
-        });
-        return;
-      }
-
-      const body = await response.json();
-
-      if (response.status === 409) {
-        setMessage({ type: "error", text: body.error });
-        return;
-      }
-
-      if (body.status === "success") {
-        const errorSuffix =
-          body.usersErrored > 0
-            ? ` (${body.usersErrored} errored)`
-            : "";
-        setMessage({
-          type: "success",
-          text: `Collected ${body.recordsProcessed} record${body.recordsProcessed === 1 ? "" : "s"} for ${body.usersProcessed} user${body.usersProcessed === 1 ? "" : "s"}${errorSuffix}`,
-        });
-        router.refresh();
-        onComplete?.();
-      } else if (body.status === "failure") {
-        setMessage({
-          type: "error",
-          text: body.errorMessage || "Collection failed",
-        });
-        router.refresh();
-        onComplete?.();
-      }
-    } catch {
-      setMessage({ type: "error", text: "Network error. Please try again." });
-    } finally {
-      setCollecting(false);
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={handleCollect}
-        disabled={collecting}
-        aria-label="Trigger usage collection"
-        className="inline-flex items-center rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {collecting ? (
-          <>
-            <svg
-              className="mr-1 h-3 w-3 animate-spin"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-            Collecting…
-          </>
-        ) : (
-          "Collect Today"
-        )}
-      </button>
-      {message && (
-        <span
-          className={`text-xs ${message.type === "success" ? "text-green-700" : "text-red-700"}`}
-          role="status"
-        >
-          {message.text}
-        </span>
-      )}
-    </div>
-  );
-}
-
 export default function JobStatusPanel({ data }: JobStatusPanelProps) {
   return (
-    <section aria-label="Background job status">
+    <section aria-label="Seat sync status">
       <h2 className="text-lg font-semibold text-gray-900">
-        Background Job Status
+        Seat Sync Status
       </h2>
       <p className="mt-1 text-sm text-gray-600">
-        Status of the latest sync and collection job runs.
+        Status of the latest seat synchronization run.
       </p>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <JobCard
@@ -378,7 +292,6 @@ export default function JobStatusPanel({ data }: JobStatusPanelProps) {
           execution={data.seatSync}
           action={<SyncNowButton />}
         />
-        <JobCard title="Usage Collection" execution={data.usageCollection} action={<CollectNowButton />} />
       </div>
     </section>
   );

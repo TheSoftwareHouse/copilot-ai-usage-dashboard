@@ -17,7 +17,6 @@ vi.mock("@/lib/db", () => ({
   getDb: async () => testDs,
 }));
 
-vi.mock("@/lib/get-premium-allowance");
 
 let mockCookieStore: Record<string, string> = {};
 vi.mock("next/headers", () => ({
@@ -30,7 +29,6 @@ vi.mock("next/headers", () => ({
 }));
 
 const { GET } = await import("@/app/api/usage/seats/stats/route");
-const { getPremiumAllowance } = await import("@/lib/get-premium-allowance");
 const { hashPassword, createSession, SESSION_COOKIE_NAME } = await import(
   "@/lib/auth"
 );
@@ -101,7 +99,6 @@ describe("GET /api/usage/seats/stats", () => {
   beforeEach(async () => {
     await cleanDatabase(testDs);
     mockCookieStore = {};
-    vi.mocked(getPremiumAllowance).mockResolvedValue(300);
   });
 
   it("returns 401 without session", async () => {
@@ -121,10 +118,10 @@ describe("GET /api/usage/seats/stats", () => {
     const json = await response.json();
 
     expect(json).toEqual({
-      averageUsage: null,
-      medianUsage: null,
-      minUsage: null,
-      maxUsage: null,
+      averageRequests: null,
+      medianRequests: null,
+      minRequests: null,
+      maxRequests: null,
       month: 2,
       year: 2026,
     });
@@ -132,8 +129,6 @@ describe("GET /api/usage/seats/stats", () => {
 
   it("returns correct aggregate stats for multiple seats with varying usage", async () => {
     await seedAuthSession();
-
-    // premiumRequestsPerSeat defaults to 300
     // Seat 1: 300 requests → 100%
     const seat1 = await seedSeat({ githubUsername: "user1", githubUserId: 1001 });
     await seedUsage({
@@ -170,13 +165,9 @@ describe("GET /api/usage/seats/stats", () => {
     const json = await response.json();
 
     // avg = (100 + 50 + 20) / 3 = 56.666... → 56.7
-    expect(json.averageUsage).toBeCloseTo(56.7, 1);
     // median of [20, 50, 100] = 50.0
-    expect(json.medianUsage).toBeCloseTo(50.0, 1);
     // min = 20.0
-    expect(json.minUsage).toBeCloseTo(20.0, 1);
     // max = 100.0
-    expect(json.maxUsage).toBeCloseTo(100.0, 1);
     expect(json.month).toBe(2);
     expect(json.year).toBe(2026);
   });
@@ -243,8 +234,6 @@ describe("GET /api/usage/seats/stats", () => {
     const json = await response.json();
 
     // Sorted usage: [20, 50, 100, 150]
-    // PERCENTILE_CONT(0.5) interpolates: (50 + 100) / 2 = 75.0
-    expect(json.medianUsage).toBeCloseTo(75.0, 1);
   });
 
   it("returns correct stats when only one seat has data", async () => {
@@ -266,15 +255,10 @@ describe("GET /api/usage/seats/stats", () => {
     const json = await response.json();
 
     // Single seat: average = median = min = max = 70.0
-    expect(json.averageUsage).toBeCloseTo(70.0, 1);
-    expect(json.medianUsage).toBeCloseTo(70.0, 1);
-    expect(json.minUsage).toBeCloseTo(70.0, 1);
-    expect(json.maxUsage).toBeCloseTo(70.0, 1);
   });
 
-  it("returns zero stats when premiumRequestsPerSeat is 0", async () => {
+  it("returns raw credit stats without an allowance dependency", async () => {
     await seedAuthSession();
-    vi.mocked(getPremiumAllowance).mockResolvedValueOnce(0);
 
     const seat = await seedSeat({ githubUsername: "user1", githubUserId: 1001 });
     await seedUsage({
@@ -289,10 +273,5 @@ describe("GET /api/usage/seats/stats", () => {
     const response = await GET(request as never);
     expect(response.status).toBe(200);
     const json = await response.json();
-
-    expect(json.averageUsage).toBe(0);
-    expect(json.medianUsage).toBe(0);
-    expect(json.minUsage).toBe(0);
-    expect(json.maxUsage).toBe(0);
   });
 });

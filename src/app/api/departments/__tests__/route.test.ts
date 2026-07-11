@@ -113,8 +113,7 @@ describe("GET /api/departments", () => {
       expect(dept).toHaveProperty("id");
       expect(dept).toHaveProperty("name");
       expect(dept).toHaveProperty("seatCount");
-      expect(dept).toHaveProperty("usagePercent");
-      expect(typeof dept.usagePercent).toBe("number");
+      expect(dept).not.toHaveProperty("usagePercent");
       expect(dept).toHaveProperty("createdAt");
       expect(dept).toHaveProperty("updatedAt");
     }
@@ -159,17 +158,17 @@ describe("GET /api/departments", () => {
     const marketing = json.departments.find((d: { name: string }) => d.name === "Marketing");
 
     expect(empty.seatCount).toBe(0);
-    expect(empty.usagePercent).toBe(0);
+    expect(empty).not.toHaveProperty("usagePercent");
     expect(engineering.seatCount).toBe(2);
     expect(marketing.seatCount).toBe(1);
   });
 
-  it("response includes premiumRequestsPerSeat", async () => {
+  it("response omits retired legacy fields", async () => {
     await seedAuthSession();
 
     const response = await GET();
     const json = await response.json();
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
   });
 
   it("departments with usage data return correct usagePercent", async () => {
@@ -223,7 +222,7 @@ describe("GET /api/departments", () => {
     const d = json.departments.find((dep: { name: string }) => dep.name === "Usage Dept");
     expect(d.seatCount).toBe(2);
     // 80 requests / (2 seats × 300 per seat) × 100 = 13.33%
-    expect(d.usagePercent).toBeCloseTo(13.33, 1);
+    expect(d).not.toHaveProperty("usagePercent");
   });
 });
 

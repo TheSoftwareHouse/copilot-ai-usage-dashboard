@@ -74,7 +74,7 @@ async function seedMemberSnapshot(
   overrides: Partial<TeamMemberSnapshot> & { teamId: number; seatId: number; month: number; year: number },
 ): Promise<TeamMemberSnapshot> {
   const repo = testDs.getRepository(TeamMemberSnapshotEntity);
-  return repo.save(overrides as Partial<TeamMemberSnapshot>);
+  return repo.save({ allocationPercentage: 100, ...overrides } as Partial<TeamMemberSnapshot>);
 }
 
 async function seedUsage(
@@ -118,7 +118,7 @@ describe("GET /api/usage/teams", () => {
     expect(json.total).toBe(0);
     expect(json.month).toBe(2);
     expect(json.year).toBe(2026);
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json).not.toHaveProperty("usagePercent");
   });
 
   it("returns teams with aggregated usage metrics", async () => {
@@ -128,7 +128,7 @@ describe("GET /api/usage/teams", () => {
     const seat1 = await seedSeat({ githubUsername: "alice", githubUserId: 1001 });
     const seat2 = await seedSeat({ githubUsername: "bob", githubUserId: 1002 });
 
-    await seedMemberSnapshot({ teamId: team.id, seatId: seat1.id, month: 2, year: 2026 });
+    await seedMemberSnapshot({ teamId: team.id, seatId: seat1.id, month: 2, year: 2026, allocationPercentage: 50 });
     await seedMemberSnapshot({ teamId: team.id, seatId: seat2.id, month: 2, year: 2026 });
 
     await seedUsage({
@@ -157,13 +157,14 @@ describe("GET /api/usage/teams", () => {
     expect(t.teamId).toBe(team.id);
     expect(t.teamName).toBe("Frontend Team");
     expect(t.memberCount).toBe(2);
-    expect(t.totalRequests).toBe(80);
-    expect(t.totalGrossAmount).toBeCloseTo(3.2, 2);
-    expect(t.averageRequestsPerMember).toBe(40);
-    expect(t.averageGrossAmountPerMember).toBeCloseTo(1.6, 2);
-    // 80 requests / (2 members × 300 allowance) × 100 = 13.33%
-    expect(t.usagePercent).toBeCloseTo(13.33, 1);
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(t.totalRequests).toBe(55);
+    expect(t.totalGrossAmount).toBeCloseTo(2.2, 2);
+    expect(t.totalCost).toBeCloseTo(2.2, 2);
+    expect(t.averageRequestsPerMember).toBe(27.5);
+    expect(t.averageGrossAmountPerMember).toBeCloseTo(1.1, 2);
+    // Allocated usage percent: (25 + 30) / ((0.5 + 1.0) * 300) × 100 = 12.22%
+    expect(t).not.toHaveProperty("usagePercent");
+    expect(json).not.toHaveProperty("usagePercent");
   });
 
   it("team with no members for the month returns zero metrics", async () => {
@@ -184,7 +185,7 @@ describe("GET /api/usage/teams", () => {
     expect(t.totalGrossAmount).toBe(0);
     expect(t.averageRequestsPerMember).toBe(0);
     expect(t.averageGrossAmountPerMember).toBe(0);
-    expect(t.usagePercent).toBe(0);
+    expect(t).not.toHaveProperty("usagePercent");
   });
 
   it("team with members but no usage data returns zero totals with correct member count", async () => {
@@ -204,7 +205,7 @@ describe("GET /api/usage/teams", () => {
     expect(t.memberCount).toBe(1);
     expect(t.totalRequests).toBe(0);
     expect(t.totalGrossAmount).toBe(0);
-    expect(t.usagePercent).toBe(0);
+    expect(t).not.toHaveProperty("usagePercent");
   });
 
   it("average per member calculated correctly (total / memberCount)", async () => {
@@ -299,7 +300,7 @@ describe("GET /api/usage/teams", () => {
 
     const t = json.teams[0];
     // capped: (min(1000,300) + min(100,300)) / (2 * 300) * 100 = (300 + 100) / 600 * 100 ≈ 66.67
-    expect(t.usagePercent).toBeCloseTo(66.67, 1);
+    expect(t).not.toHaveProperty("usagePercent");
     // totalRequests remains uncapped raw sum
     expect(t.totalRequests).toBe(1100);
   });
@@ -329,7 +330,7 @@ describe("GET /api/usage/teams", () => {
 
     const t = json.teams[0];
     // All under cap: (100 + 200) / (2 * 300) * 100 = 50% — same as uncapped
-    expect(t.usagePercent).toBe(50);
+    expect(t).not.toHaveProperty("usagePercent");
     expect(t.totalRequests).toBe(300);
   });
 });

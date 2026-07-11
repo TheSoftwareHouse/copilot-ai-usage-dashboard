@@ -134,7 +134,7 @@ describe("GET /api/teams", () => {
     expect(json.teams[0].name).toBe("Active Team");
   });
 
-  it("each team includes usagePercent, memberCount and premiumRequestsPerSeat", async () => {
+  it("each team includes memberCount and omits retired allowance fields", async () => {
     await seedAuthSession();
 
     const teamRepo = testDs.getRepository(TeamEntity);
@@ -145,11 +145,10 @@ describe("GET /api/teams", () => {
 
     expect(json.teams).toHaveLength(1);
     const t = json.teams[0];
-    expect(t).toHaveProperty("usagePercent");
+    expect(t).not.toHaveProperty("usagePercent");
     expect(t).toHaveProperty("memberCount");
-    expect(typeof t.usagePercent).toBe("number");
     expect(typeof t.memberCount).toBe("number");
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
   });
 
   it("teams with no members return usagePercent 0 and memberCount 0", async () => {
@@ -163,7 +162,7 @@ describe("GET /api/teams", () => {
 
     const t = json.teams[0];
     expect(t.memberCount).toBe(0);
-    expect(t.usagePercent).toBe(0);
+    expect(t).not.toHaveProperty("usagePercent");
   });
 
   it("teams with members and usage return correct usagePercent", async () => {
@@ -212,7 +211,7 @@ describe("GET /api/teams", () => {
     const t = json.teams[0];
     expect(t.memberCount).toBe(2);
     // 80 requests / (2 members × 300 per seat) × 100 = 13.33%
-    expect(t.usagePercent).toBeCloseTo(13.33, 1);
+    expect(t).not.toHaveProperty("usagePercent");
   });
 });
 

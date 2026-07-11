@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 100;
 
-const SORTABLE_FIELDS = new Set(["usagePercent", "githubUsername", "department"]);
+const SORTABLE_FIELDS = new Set(["totalRequests", "githubUsername", "department"]);
 
 const SORT_COLUMN_MAP: Record<string, string> = {
-  usagePercent: '"usagePercent"',
+  totalRequests: '"totalRequests"',
   githubUsername: 'cs."githubUsername"',
   department: 'cs."department"',
 };
@@ -37,7 +36,7 @@ export async function GET(request: NextRequest) {
     if (pageSize > MAX_PAGE_SIZE) pageSize = MAX_PAGE_SIZE;
 
     const sortByParam = searchParams.get("sortBy") ?? "";
-    const sortBy = SORTABLE_FIELDS.has(sortByParam) ? sortByParam : "usagePercent";
+    const sortBy = SORTABLE_FIELDS.has(sortByParam) ? sortByParam : "totalRequests";
 
     const sortOrderParam = (searchParams.get("sortOrder") ?? "").toLowerCase();
     const sortOrder: "asc" | "desc" = sortOrderParam === "desc" ? "desc" : "asc";
@@ -45,7 +44,6 @@ export async function GET(request: NextRequest) {
     const orderByClause = `${SORT_COLUMN_MAP[sortBy]} ${sortOrder === "asc" ? "ASC" : "DESC"}`;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
 
     const countResult: { count: string }[] = await dataSource.query(
       `WITH seat_usage AS (
@@ -60,10 +58,8 @@ export async function GET(request: NextRequest) {
        FROM copilot_seat cs
        LEFT JOIN seat_usage su ON su."seatId" = cs.id
        WHERE cs.status = 'active'
-         AND (CASE WHEN $3 > 0
-                   THEN COALESCE(su."totalRequests", 0) / $3::numeric * 100
-                   ELSE 0 END) < 100`,
-      [month, year, premiumRequestsPerSeat],
+        AND COALESCE(su."totalRequests", 0) >= 0`,
+      [month, year],
     );
 
     const total = parseInt(countResult[0]?.count ?? "0", 10);
@@ -77,7 +73,6 @@ export async function GET(request: NextRequest) {
         page,
         pageSize,
         totalPages: 1,
-        premiumRequestsPerSeat,
       });
     }
 
@@ -88,7 +83,6 @@ export async function GET(request: NextRequest) {
       lastName: string | null;
       department: string | null;
       totalRequests: string;
-      usagePercent: string;
     }[] = await dataSource.query(
       `WITH seat_usage AS (
          SELECT cu."seatId",
@@ -103,19 +97,14 @@ export async function GET(request: NextRequest) {
               cs."firstName",
               cs."lastName",
               cs."department",
-              COALESCE(su."totalRequests", 0) AS "totalRequests",
-              CASE WHEN $3 > 0
-                   THEN ROUND(COALESCE(su."totalRequests", 0) / $3::numeric * 100, 1)
-                   ELSE 0 END AS "usagePercent"
+                COALESCE(su."totalRequests", 0) AS "totalRequests"
        FROM copilot_seat cs
        LEFT JOIN seat_usage su ON su."seatId" = cs.id
        WHERE cs.status = 'active'
-         AND (CASE WHEN $3 > 0
-                   THEN COALESCE(su."totalRequests", 0) / $3::numeric * 100
-                   ELSE 0 END) < 100
+         AND COALESCE(su."totalRequests", 0) >= 0
        ORDER BY ${orderByClause}
-       LIMIT $4 OFFSET $5`,
-      [month, year, premiumRequestsPerSeat, pageSize, offset],
+      LIMIT $3 OFFSET $4`,
+      [month, year, pageSize, offset],
     );
 
     const seats = rows.map((row) => ({
@@ -125,7 +114,6 @@ export async function GET(request: NextRequest) {
       lastName: row.lastName,
       department: row.department,
       totalRequests: Number(row.totalRequests),
-      usagePercent: Number(row.usagePercent),
     }));
 
     return NextResponse.json({
@@ -134,7 +122,6 @@ export async function GET(request: NextRequest) {
       page,
       pageSize,
       totalPages,
-      premiumRequestsPerSeat,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/seats/low-usage");

@@ -90,8 +90,8 @@ export async function executeTeamCarryForward(): Promise<TeamCarryForwardResult>
     // ON CONFLICT DO NOTHING makes this idempotent.
     // RETURNING id gives us the exact count of inserted rows.
     const insertedRows = await dataSource.query(
-      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year")
-       SELECT tms."teamId", tms."seatId", $1, $2
+      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year", "allocationPercentage")
+       SELECT tms."teamId", tms."seatId", $1, $2, tms."allocationPercentage"
        FROM team_member_snapshot tms
        JOIN team t ON t.id = tms."teamId" AND t."deletedAt" IS NULL
        WHERE tms.month = $3 AND tms.year = $4

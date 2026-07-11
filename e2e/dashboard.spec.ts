@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { seedTestUser, loginViaApi } from "./helpers/auth";
 import { getClient } from "./helpers/db";
 
@@ -34,20 +35,19 @@ async function seedDashboardSummary() {
 
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO UPDATE SET
        "totalSeats" = EXCLUDED."totalSeats",
        "activeSeats" = EXCLUDED."activeSeats",
        "totalSpending" = EXCLUDED."totalSpending",
        "seatBaseCost" = EXCLUDED."seatBaseCost",
-       "totalPremiumRequests" = EXCLUDED."totalPremiumRequests",
-       "includedPremiumRequestsUsed" = EXCLUDED."includedPremiumRequestsUsed",
+       "totalAiCredits" = EXCLUDED."totalAiCredits",
        "modelUsage" = EXCLUDED."modelUsage",
        "mostActiveUsers" = EXCLUDED."mostActiveUsers",
        "leastActiveUsers" = EXCLUDED."leastActiveUsers",
        "updatedAt" = now()`,
-    [month, year, 42, 38, 770.0, 722.0, 15000, 9500, modelUsage, mostActiveUsers, leastActiveUsers],
+    [month, year, 42, 38, 770.0, 722.0, 15000, modelUsage, mostActiveUsers, leastActiveUsers],
   );
   await client.end();
 }
@@ -60,8 +60,7 @@ async function seedSummaryForMonth(
     activeSeats?: number;
     totalSpending?: number;
     seatBaseCost?: number;
-    totalPremiumRequests?: number;
-    includedPremiumRequestsUsed?: number;
+    totalAiCredits?: number;
     modelUsage?: unknown[];
     mostActiveUsers?: unknown[];
     leastActiveUsers?: unknown[];
@@ -72,8 +71,7 @@ async function seedSummaryForMonth(
     activeSeats = 8,
     totalSpending = 500.0,
     seatBaseCost = 152.0,
-    totalPremiumRequests = 1200,
-    includedPremiumRequestsUsed = 900,
+    totalAiCredits = 1200,
     modelUsage = [{ model: "GPT-4o", totalRequests: 50, totalAmount: 200.0 }],
     mostActiveUsers = [{ seatId: 1, githubUsername: "user-1", firstName: "Test", lastName: "User", totalRequests: 100, totalSpending: 50.0 }],
     leastActiveUsers = [{ seatId: 2, githubUsername: "user-2", firstName: "Low", lastName: "User", totalRequests: 5, totalSpending: 2.0 }],
@@ -81,22 +79,21 @@ async function seedSummaryForMonth(
 
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO UPDATE SET
        "totalSeats" = EXCLUDED."totalSeats",
        "activeSeats" = EXCLUDED."activeSeats",
        "totalSpending" = EXCLUDED."totalSpending",
        "seatBaseCost" = EXCLUDED."seatBaseCost",
-       "totalPremiumRequests" = EXCLUDED."totalPremiumRequests",
-       "includedPremiumRequestsUsed" = EXCLUDED."includedPremiumRequestsUsed",
+       "totalAiCredits" = EXCLUDED."totalAiCredits",
        "modelUsage" = EXCLUDED."modelUsage",
        "mostActiveUsers" = EXCLUDED."mostActiveUsers",
        "leastActiveUsers" = EXCLUDED."leastActiveUsers",
        "updatedAt" = now()`,
     [
       month, year, totalSeats, activeSeats, totalSpending, seatBaseCost,
-      totalPremiumRequests, includedPremiumRequestsUsed,
+      totalAiCredits,
       JSON.stringify(modelUsage), JSON.stringify(mostActiveUsers), JSON.stringify(leastActiveUsers),
     ],
   );
@@ -166,6 +163,74 @@ async function seedCopilotUsage(
   await client.end();
 }
 
+function makeCostUsageItem(grossQuantity: number) {
+  return {
+    product: "Copilot",
+    sku: "AIC",
+    model: "GPT-4o",
+    unitType: "requests",
+    pricePerUnit: 0.01,
+    grossQuantity,
+    grossAmount: grossQuantity * 0.01,
+    discountQuantity: 0,
+    discountAmount: 0,
+    netQuantity: 0,
+    netAmount: 0,
+  };
+}
+
+function expectedElapsedDays(month: number, year: number, calendarDays: number): number {
+  const now = new Date();
+  const currentMonth = now.getUTCMonth() + 1;
+  const currentYear = now.getUTCFullYear();
+
+  if (year < currentYear || (year === currentYear && month < currentMonth)) {
+    return calendarDays;
+  }
+
+  if (year > currentYear || (year === currentYear && month > currentMonth)) {
+    return 0;
+  }
+
+  return Math.min(now.getUTCDate(), calendarDays);
+}
+
+function expectedCostCards(totalGrossQuantity: number, month: number, year: number) {
+  const calendarDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const elapsedDays = expectedElapsedDays(month, year, calendarDays);
+  let workingDays = 0;
+
+  for (let day = 1; day <= calendarDays; day++) {
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (weekday >= 1 && weekday <= 5) workingDays++;
+  }
+
+  const totalCost = totalGrossQuantity / 100;
+  const averageDailyCost = elapsedDays > 0 ? Math.round((totalCost / elapsedDays) * 100) / 100 : 0;
+  const predictedMonthCost = averageDailyCost * workingDays;
+
+  return {
+    averageDailyCost: `$${averageDailyCost.toFixed(2)}`,
+    totalCost: `$${totalCost.toFixed(2)}`,
+    predictedMonthCost: `$${predictedMonthCost.toFixed(2)}`,
+  };
+}
+
+async function expectCostCards(
+  page: Page,
+  values: ReturnType<typeof expectedCostCards>,
+) {
+  for (const [label, value] of [
+    ["Average Daily Cost", values.averageDailyCost],
+    ["Total Cost", values.totalCost],
+    ["Predicted Month Cost", values.predictedMonthCost],
+  ] as const) {
+    const card = page.getByRole("heading", { name: label }).locator("..");
+    await expect(card).toBeVisible();
+    await expect(card.getByText(value, { exact: true })).toBeVisible();
+  }
+}
+
 async function clearAll() {
   const client = await getClient();
   await client.query("DELETE FROM copilot_usage");
@@ -200,15 +265,6 @@ test.describe("Dashboard", () => {
     ).toBeVisible();
   });
 
-  test("dashboard displays total seats count", async ({ page }) => {
-    await seedDashboardSummary();
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    await expect(page.getByText("42")).toBeVisible();
-    await expect(page.getByText(/38 active/i)).toBeVisible();
-  });
-
   test("dashboard displays per-model usage", async ({ page }) => {
     await seedDashboardSummary();
     await loginViaApi(page, "admin", "password123");
@@ -234,50 +290,21 @@ test.describe("Dashboard", () => {
     await expect(page.getByText("top-user-2")).toBeVisible();
     await expect(page.getByText("$87.25")).toBeVisible();
 
-    // Usage status indicators should appear next to usernames
     const mostActiveHeading = page.getByRole("heading", { name: /most active users/i });
     const mostActiveCard = mostActiveHeading.locator("../..");
-    await expect(mostActiveCard.getByRole("img", { name: /usage/i }).first()).toBeVisible();
+    await expect(mostActiveCard.getByText("500 AIC Units", { exact: true })).toBeVisible();
   });
 
-  test("overcap user on most active list has correct usage indicator", async ({ page }) => {
-    // top-user-1 has 500 requests against 300 premiumRequestsPerSeat (167%)
+  test("most active user rows stay linked to seat detail", async ({ page }) => {
     await seedDashboardSummary();
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
     const mostActiveHeading = page.getByRole("heading", { name: /most active users/i });
     const mostActiveCard = mostActiveHeading.locator("../..");
-    // The first indicator belongs to top-user-1 (500 requests / 300 allowance = 167%)
-    // getUsageColour(167) returns "High usage"
-    await expect(mostActiveCard.getByRole("img", { name: "High usage" }).first()).toBeVisible();
-  });
-
-  test("dashboard displays total spending with breakdown", async ({ page }) => {
-    await seedDashboardSummary();
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    await expect(page.getByText("$770.00", { exact: true })).toBeVisible();
-    // Breakdown: $48.00 paid requests + $722.00 seat licenses
-    await expect(page.getByText(/paid requests.*seat licenses/)).toBeVisible();
-  });
-
-  test("dashboard displays premium request metrics", async ({ page }) => {
-    await seedDashboardSummary();
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    // Included Allowance: 38 seats × 300 = 11,400
-    await expect(page.getByText("11,400", { exact: true })).toBeVisible();
-    // Included Used (from discountQuantity): 9,500
-    await expect(page.getByText("9,500", { exact: true })).toBeVisible();
-    // Included Remaining: 11,400 - 9,500 = 1,900
-    await expect(page.getByText("1,900")).toBeVisible();
-    // Total Used (uncapped): 15,000
-    await expect(page.getByText("15,000")).toBeVisible();
-    // Paid Requests: 15,000 - 9,500 = 5,500
-    await expect(page.getByText("5,500")).toBeVisible();
+    const firstUserLink = mostActiveCard.getByRole("link", { name: /top-user-1/i });
+    await expect(firstUserLink).toBeVisible();
+    await expect(firstUserLink).toHaveAttribute("href", /\/usage\/seats\/101\?month=\d+&year=\d+/);
   });
 
   test("dashboard displays empty state when no summary data exists", async ({
@@ -286,185 +313,83 @@ test.describe("Dashboard", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
+    await expectCostCards(page, {
+      averageDailyCost: "$0.00",
+      totalCost: "$0.00",
+      predictedMonthCost: "$0.00",
+    });
     await expect(
-      page.getByText(/no usage data available/i),
+      page.getByText(/no aic csv data has been imported/i),
     ).toBeVisible();
   });
 
-  test("allowance used card is visible on dashboard", async ({ page }) => {
-    await seedDashboardSummary();
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
+  test("dashboard cost cards recalculate for the selected month", async ({ page }) => {
+    const currentMonth = new Date().getUTCMonth() + 1;
+    const currentYear = new Date().getUTCFullYear();
+    const previousMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+    const previousYear = currentMonth === 1 ? currentYear - 1 : currentYear;
 
-    await expect(
-      page.getByRole("heading", { name: /allowance used/i }),
-    ).toBeVisible();
-  });
+    await seedSummaryForMonth(currentMonth, currentYear);
+    await seedSummaryForMonth(previousMonth, previousYear);
 
-  test("allowance used card displays correct percentage and absolute values", async ({
-    page,
-  }) => {
-    // 38 active seats × 300 = 11,400 included; 9,500 used → 83%
-    await seedDashboardSummary();
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-    await expect(card.getByText("83%")).toBeVisible();
-    await expect(card.getByText("9,500 / 11,400 requests")).toBeVisible();
-  });
-
-  test("allowance used card shows N/A when included allowance is zero", async ({
-    page,
-  }) => {
-    const now = new Date();
-    const month = now.getUTCMonth() + 1;
-    const year = now.getUTCFullYear();
-
-    // Seed with 0 active seats → 0 included allowance → "N/A"
-    await seedSummaryForMonth(month, year, {
-      totalSeats: 5,
-      activeSeats: 0,
-      totalSpending: 0,
-      seatBaseCost: 0,
-      totalPremiumRequests: 0,
-      includedPremiumRequestsUsed: 0,
-      modelUsage: [{ model: "GPT-4o", totalRequests: 1, totalAmount: 1.0 }],
-      mostActiveUsers: [{ seatId: 1, githubUsername: "user-1", firstName: "Test", lastName: "User", totalRequests: 1, totalSpending: 1.0 }],
-      leastActiveUsers: [],
+    const seatId = await seedCopilotSeat({ githubUsername: "cost-dashboard-user" });
+    await seedCopilotUsage({
+      seatId,
+      day: 1,
+      month: currentMonth,
+      year: currentYear,
+      usageItems: [makeCostUsageItem(1000)],
+    });
+    await seedCopilotUsage({
+      seatId,
+      day: 2,
+      month: currentMonth,
+      year: currentYear,
+      usageItems: [makeCostUsageItem(2100)],
+    });
+    await seedCopilotUsage({
+      seatId,
+      day: 1,
+      month: previousMonth,
+      year: previousYear,
+      usageItems: [makeCostUsageItem(3000)],
     });
 
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-    await expect(card.getByText("N/A")).toBeVisible();
-    await expect(card.getByText("0 / 0 requests")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(3100, currentMonth, currentYear));
+
+    const select = page.getByLabel("Month", { exact: true });
+    await select.selectOption(`${previousMonth}-${previousYear}`);
+    await expectCostCards(page, expectedCostCards(3000, previousMonth, previousYear));
   });
 
-  test("allowance used card updates when month filter changes", async ({ page }) => {
-    const now = new Date();
-    const currentMonth = now.getUTCMonth() + 1;
-    const currentYear = now.getUTCFullYear();
+  test("dashboard cost cards remain visible in an AIC reporting month", async ({ page }) => {
+    const aicMonth = 5;
+    const aicYear = 2026;
 
-    // Current month: 38 active × 300 = 11,400; 9,500 used → 83%
-    await seedDashboardSummary();
-
-    // Previous month: 8 active × 300 = 2,400; 900 used → 38%
-    const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-    const prevYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-    await seedSummaryForMonth(prevMonth, prevYear);
-
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    // Verify current month percentage
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-    await expect(card.getByText("83%")).toBeVisible();
-
-    // Switch to previous month
-    const select = page.getByLabel("Month");
-    await select.selectOption(`${prevMonth}-${prevYear}`);
-
-    // Verify updated percentage (900 / 2400 = 37.5% → 38%)
-    await expect(card.getByText("38%")).toBeVisible();
-  });
-
-  test("trend indicator shows correct direction and delta", async ({ page }) => {
-    const now = new Date();
-    const currentMonth = now.getUTCMonth() + 1;
-    const currentYear = now.getUTCFullYear();
-
-    // Current month: 38 active × 300 = 11,400; 9,500 used → 83.33%
-    await seedDashboardSummary();
-
-    // Previous month: 8 active × 300 = 2,400; 900 used → 37.5%
-    const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-    const prevYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-    await seedSummaryForMonth(prevMonth, prevYear);
-
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-    // 83.33 - 37.5 = 45.83 → rounds to 46
-    await expect(card.getByText("↑ 46% vs last month")).toBeVisible();
-  });
-
-  test("trend shows 'No prior data' when no previous month exists", async ({ page }) => {
-    // Seed only current month — no previous month row
-    await seedDashboardSummary();
-
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-    await expect(card.getByText("No prior data")).toBeVisible();
-  });
-
-  test("trend shows 'No prior data' when previous month has 0 active seats", async ({ page }) => {
-    const now = new Date();
-    const currentMonth = now.getUTCMonth() + 1;
-    const currentYear = now.getUTCFullYear();
-
-    await seedDashboardSummary();
-
-    // Previous month with 0 active seats → 0 allowance → "No prior data"
-    const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-    const prevYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-    await seedSummaryForMonth(prevMonth, prevYear, {
-      totalSeats: 5,
-      activeSeats: 0,
-      totalSpending: 0,
-      seatBaseCost: 0,
-      totalPremiumRequests: 0,
-      includedPremiumRequestsUsed: 0,
+    await seedSummaryForMonth(aicMonth, aicYear);
+    const seatId = await seedCopilotSeat({ githubUsername: "aic-dashboard-user" });
+    await seedCopilotUsage({
+      seatId,
+      day: 1,
+      month: aicMonth,
+      year: aicYear,
+      usageItems: [makeCostUsageItem(400)],
     });
 
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-    await expect(card.getByText("No prior data")).toBeVisible();
+    const select = page.getByLabel("Month", { exact: true });
+    await select.selectOption(`${aicMonth}-${aicYear}`);
+
+    await expect(page.getByRole("heading", { name: "Daily AIC Units" })).toBeVisible();
+    await expectCostCards(page, expectedCostCards(400, aicMonth, aicYear));
   });
 
-  test("trend updates when month filter changes", async ({ page }) => {
-    const now = new Date();
-    const currentMonth = now.getUTCMonth() + 1;
-    const currentYear = now.getUTCFullYear();
-
-    // Month C (current): 38 active × 300 = 11,400; 9,500 used → 83.33%
-    await seedDashboardSummary();
-
-    // Month B (prev): 8 active × 300 = 2,400; 900 used → 37.5%
-    const monthB = currentMonth === 1 ? 12 : currentMonth - 1;
-    const yearB = currentMonth === 1 ? currentYear - 1 : currentYear;
-    await seedSummaryForMonth(monthB, yearB);
-
-    // Month A (two months back): 10 active × 300 = 3,000; 1,500 used → 50%
-    const monthA = monthB === 1 ? 12 : monthB - 1;
-    const yearA = monthB === 1 ? yearB - 1 : yearB;
-    await seedSummaryForMonth(monthA, yearA, {
-      activeSeats: 10,
-      includedPremiumRequestsUsed: 1500,
-      totalPremiumRequests: 1500,
-    });
-
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/dashboard");
-
-    const card = page.getByRole("heading", { name: /allowance used/i }).locator("..");
-
-    // Current month (C): trend vs B → 83.33 - 37.5 = 45.83 → 46
-    await expect(card.getByText("↑ 46% vs last month")).toBeVisible();
-
-    // Switch to month B: trend vs A → 37.5 - 50 = -12.5 → Math.round(-12.5) = -12 → ↓ 12%
-    const select = page.getByLabel("Month");
-    await select.selectOption(`${monthB}-${yearB}`);
-    await expect(card.getByText("↓ 12% vs last month")).toBeVisible();
-  });
-
-  test("shows Daily Premium Requests chart when usage data exists", async ({ page }) => {
+  test("shows daily aic units chart when usage data exists", async ({ page }) => {
     const now = new Date();
     const month = now.getUTCMonth() + 1;
     const year = now.getUTCFullYear();
@@ -477,18 +402,18 @@ test.describe("Dashboard", () => {
     await page.goto("/dashboard");
 
     await expect(
-      page.getByRole("heading", { name: /daily premium requests/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
   });
 
-  test("hides Daily Premium Requests chart when no usage data exists", async ({ page }) => {
+  test("hides daily aic units chart when no usage data exists", async ({ page }) => {
     await seedDashboardSummary();
 
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
     await expect(
-      page.getByRole("heading", { name: /daily premium requests/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeHidden();
   });
 
@@ -510,7 +435,7 @@ test.describe("Dashboard", () => {
     const currentMonthLabel = `${MONTH_NAMES[currentMonth - 1]} ${currentYear}`;
     const previousMonthLabel = `${MONTH_NAMES[prevMonth - 1]} ${prevYear}`;
 
-    const chart = page.getByRole("img", { name: /daily premium requests bar chart/i });
+    const chart = page.getByRole("img", { name: /daily aic units bar chart/i });
     await expect(chart).toBeVisible();
     await expect(chart.getByText(currentMonthLabel)).toBeVisible();
     await expect(chart.getByText(previousMonthLabel)).toBeVisible();
@@ -533,7 +458,7 @@ test.describe("Dashboard", () => {
     const currentMonthLabel = `${MONTH_NAMES[currentMonth - 1]} ${currentYear}`;
     const previousMonthLabel = `${MONTH_NAMES[prevMonth - 1]} ${prevYear}`;
 
-    const chart = page.getByRole("img", { name: /daily premium requests bar chart/i });
+    const chart = page.getByRole("img", { name: /daily aic units bar chart/i });
     await expect(chart).toBeVisible();
     await expect(chart.getByText(currentMonthLabel)).toBeHidden();
     await expect(chart.getByText(previousMonthLabel)).toBeHidden();
@@ -561,7 +486,7 @@ test.describe("Dashboard — Month Filter", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
-    await expect(page.getByLabel("Month")).toBeVisible();
+    await expect(page.getByLabel("Month", { exact: true })).toBeVisible();
   });
 
   test("current month is selected by default", async ({ page }) => {
@@ -574,7 +499,7 @@ test.describe("Dashboard — Month Filter", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
-    const select = page.getByLabel("Month");
+    const select = page.getByLabel("Month", { exact: true });
     await expect(select).toBeVisible();
     await expect(select).toHaveValue(`${currentMonth}-${currentYear}`);
     // Verify the displayed text matches the expected month label
@@ -598,8 +523,7 @@ test.describe("Dashboard — Month Filter", () => {
       activeSeats: 55,
       totalSpending: 1500.0,
       seatBaseCost: 300.0,
-      totalPremiumRequests: 8000,
-      includedPremiumRequestsUsed: 4000,
+      totalAiCredits: 8000,
       modelUsage: [
         { model: "Claude Haiku 4.5", totalRequests: 200, totalAmount: 800.0 },
       ],
@@ -615,16 +539,14 @@ test.describe("Dashboard — Month Filter", () => {
     await page.goto("/dashboard");
 
     // Verify current month data is displayed
-    await expect(page.getByText("42")).toBeVisible();
-    await expect(page.getByText("$770.00", { exact: true })).toBeVisible();
+    await expect(page.getByText("GPT-4o")).toBeVisible();
+    await expect(page.getByText("top-user-1")).toBeVisible();
 
     // Switch to previous month
-    const select = page.getByLabel("Month");
+    const select = page.getByLabel("Month", { exact: true });
     await select.selectOption(`${prevMonth}-${prevYear}`);
 
     // Verify metrics update — previous month data
-    await expect(page.getByText("77")).toBeVisible();
-    await expect(page.getByText("$1500.00")).toBeVisible();
     await expect(page.getByText("Claude Haiku 4.5")).toBeVisible();
     await expect(page.getByText("prev-top-user")).toBeVisible();
   });

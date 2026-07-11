@@ -77,7 +77,7 @@ async function seedMemberSnapshot(
   overrides: Partial<TeamMemberSnapshot> & { teamId: number; seatId: number; month: number; year: number },
 ): Promise<TeamMemberSnapshot> {
   const repo = testDs.getRepository(TeamMemberSnapshotEntity);
-  return repo.save(overrides as Partial<TeamMemberSnapshot>);
+  return repo.save({ allocationPercentage: 100, ...overrides } as Partial<TeamMemberSnapshot>);
 }
 
 async function seedUsage(
@@ -139,7 +139,7 @@ describe("GET /api/usage/teams/[teamId]", () => {
     const seat1 = await seedSeat({ githubUsername: "alice", githubUserId: 1001, firstName: "Alice", lastName: "Smith" });
     const seat2 = await seedSeat({ githubUsername: "bob", githubUserId: 1002, firstName: "Bob", lastName: "Jones" });
 
-    await seedMemberSnapshot({ teamId: team.id, seatId: seat1.id, month: 2, year: 2026 });
+    await seedMemberSnapshot({ teamId: team.id, seatId: seat1.id, month: 2, year: 2026, allocationPercentage: 50 });
     await seedMemberSnapshot({ teamId: team.id, seatId: seat2.id, month: 2, year: 2026 });
 
     await seedUsage({
@@ -159,12 +159,19 @@ describe("GET /api/usage/teams/[teamId]", () => {
     expect(json.team.teamId).toBe(team.id);
     expect(json.team.teamName).toBe("Frontend Team");
     expect(json.team.memberCount).toBe(2);
-    expect(json.team.totalRequests).toBe(150);
-    expect(json.team.totalGrossAmount).toBeCloseTo(6.0, 2);
-    expect(json.team.averageRequestsPerMember).toBe(75);
-    expect(json.team.averageGrossAmountPerMember).toBeCloseTo(3.0, 2);
+    expect(json.team.totalRequests).toBe(100);
+    expect(json.team.totalGrossAmount).toBeCloseTo(4.0, 2);
+    expect(json.team.totalCost).toBeCloseTo(4.0, 2);
+    expect(json.team.averageRequestsPerMember).toBe(50);
+    expect(json.team.averageGrossAmountPerMember).toBeCloseTo(2.0, 2);
 
     expect(json.members).toHaveLength(2);
+    expect(json.members[0].allocationPercentage).toBe(50);
+    expect(json.members[0].allocatedRequests).toBe(50);
+    expect(json.members[0].totalGrossAmount).toBeCloseTo(2.0, 2);
+    expect(json.members[1].allocationPercentage).toBe(100);
+    expect(json.members[1].allocatedRequests).toBe(50);
+    expect(json.members[1].totalGrossAmount).toBeCloseTo(2.0, 2);
     expect(json.month).toBe(2);
     expect(json.year).toBe(2026);
   });
@@ -229,6 +236,41 @@ describe("GET /api/usage/teams/[teamId]", () => {
     expect(json.members[0].githubUsername).toBe("idle");
     expect(json.members[0].totalRequests).toBe(0);
     expect(json.members[0].totalGrossAmount).toBe(0);
+  });
+
+  it("keeps costStats raw when team allocations are below 100%", async () => {
+    await seedAuthSession();
+
+    const team = await seedTeam("Allocation Team");
+    const seat1 = await seedSeat({ githubUsername: "alloc-low", githubUserId: 6001, firstName: "Alloc", lastName: "Low" });
+    const seat2 = await seedSeat({ githubUsername: "alloc-high", githubUserId: 6002, firstName: "Alloc", lastName: "High" });
+
+    await seedMemberSnapshot({ teamId: team.id, seatId: seat1.id, month: 2, year: 2026, allocationPercentage: 50 });
+    await seedMemberSnapshot({ teamId: team.id, seatId: seat2.id, month: 2, year: 2026 });
+
+    await seedUsage({
+      seatId: seat1.id,
+      day: 1,
+      month: 2,
+      year: 2026,
+      usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 100, grossAmount: 4000, discountQuantity: 0, discountAmount: 0, netQuantity: 0, netAmount: 0 }],
+    });
+    await seedUsage({
+      seatId: seat2.id,
+      day: 1,
+      month: 2,
+      year: 2026,
+      usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 50, grossAmount: 2000, discountQuantity: 0, discountAmount: 0, netQuantity: 0, netAmount: 0 }],
+    });
+
+    const { request, context } = makeGetRequest(String(team.id), { month: "2", year: "2026" });
+    const response = await GET(request as never, context);
+    const json = await response.json();
+
+    expect(json.team.totalCost).toBe(4000);
+    expect(json.costStats.totalCost).toBeCloseTo(1.5, 2);
+    expect(json.costStats.averageDailyCost).toBeCloseTo(0.05, 2);
+    expect(json.costStats.predictedMonthCost).toBeCloseTo(1, 2);
   });
 
   it("dailyUsagePerMember returned with daily breakdown per member", async () => {
@@ -313,11 +355,13 @@ describe("GET /api/usage/teams/[teamId]", () => {
     const json = await response.json();
 
     // team.usagePercent is capped: (min(1000,300) + min(100,300)) / (2 * 300) * 100 ≈ 66.67
-    expect(json.team.usagePercent).toBeCloseTo(66.67, 1);
-    // team.totalRequests stays raw uncapped
+    expect(json.team).not.toHaveProperty("usagePercent");
+    // team.totalRequests stays uncapped when allocation is 100%
     expect(json.team.totalRequests).toBe(1100);
-    // members retain raw individual totals
+    // members expose both raw and allocated totals
     expect(json.members[0].totalRequests).toBe(1000);
+    expect(json.members[0].allocatedRequests).toBe(1000);
     expect(json.members[1].totalRequests).toBe(100);
+    expect(json.members[1].allocatedRequests).toBe(100);
   });
 });

@@ -11,7 +11,6 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-import { getBarHexColor } from "@/lib/usage-helpers";
 
 export interface DepartmentUsageChartEntry {
   departmentId: number;
@@ -22,6 +21,12 @@ export interface DepartmentUsageChartEntry {
 interface DepartmentUsageChartProps {
   departments: DepartmentUsageChartEntry[];
   onBarClick?: (departmentId: number) => void;
+}
+
+function getUsageBarColor(percent: number): string {
+  if (percent >= 90) return "#22c55e";
+  if (percent >= 50) return "#f97316";
+  return "#ef4444";
 }
 
 export default function DepartmentUsageChart({
@@ -38,7 +43,7 @@ export default function DepartmentUsageChart({
   return (
     <div
       role="img"
-      aria-label="Department usage chart showing each department's usage percentage of included premium requests"
+      aria-label="Department usage chart showing each department's usage percentage"
     >
       <ResponsiveContainer width="100%" height={chartHeight}>
         <BarChart layout="vertical" data={sortedDepartments}>
@@ -74,7 +79,7 @@ export default function DepartmentUsageChart({
             }}
           >
             {sortedDepartments.map((dept) => (
-              <Cell key={dept.departmentId} fill={getBarHexColor(dept.usagePercent)} />
+              <Cell key={dept.departmentId} fill={getUsageBarColor(dept.usagePercent)} />
             ))}
           </Bar>
         </BarChart>

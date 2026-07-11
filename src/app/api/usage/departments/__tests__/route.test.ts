@@ -149,7 +149,7 @@ describe("GET /api/usage/departments", () => {
     expect(d.totalGrossAmount).toBeCloseTo(12.0, 2);
     expect(d.averageRequestsPerMember).toBe(150);
     // usagePercent = (300 / (2 * 300)) * 100 = 50
-    expect(d.usagePercent).toBe(50);
+    expect(d).not.toHaveProperty("usagePercent");
   });
 
   it("usagePercent is correctly computed with per-seat capping", async () => {
@@ -175,7 +175,7 @@ describe("GET /api/usage/departments", () => {
     expect(d.memberCount).toBe(2);
     expect(d.totalRequests).toBe(450);
     // usagePercent = (min(450,300) + min(0,300)) / (2 * 300) * 100 = 300 / 600 * 100 = 50
-    expect(d.usagePercent).toBe(50);
+    expect(d).not.toHaveProperty("usagePercent");
   });
 
   it("department with no assigned seats returns zero metrics and usagePercent: 0", async () => {
@@ -195,7 +195,7 @@ describe("GET /api/usage/departments", () => {
     expect(d.totalRequests).toBe(0);
     expect(d.totalGrossAmount).toBe(0);
     expect(d.averageRequestsPerMember).toBe(0);
-    expect(d.usagePercent).toBe(0);
+    expect(d).not.toHaveProperty("usagePercent");
   });
 
   it("department with assigned seats but no usage data for the month returns zero totals with correct member count", async () => {
@@ -289,11 +289,11 @@ describe("GET /api/usage/departments", () => {
     expect(json.departments).toHaveLength(3);
     // Order: High (100%) → Low (30%) → Empty (0%)
     expect(json.departments[0].departmentName).toBe("High Dept");
-    expect(json.departments[0].usagePercent).toBe(100);
+    expect(json.departments[0]).not.toHaveProperty("usagePercent");
     expect(json.departments[1].departmentName).toBe("Low Dept");
-    expect(json.departments[1].usagePercent).toBe(30);
+    expect(json.departments[1]).not.toHaveProperty("usagePercent");
     expect(json.departments[2].departmentName).toBe("Empty Dept");
-    expect(json.departments[2].usagePercent).toBe(0);
+    expect(json.departments[2]).not.toHaveProperty("usagePercent");
   });
 
   it("usagePercent uses capped per-seat requests — member exceeding cap", async () => {
@@ -319,7 +319,7 @@ describe("GET /api/usage/departments", () => {
 
     const d = json.departments[0];
     // capped: (min(1000,300) + min(100,300)) / (2 * 300) * 100 ≈ 66.67
-    expect(d.usagePercent).toBeCloseTo(66.67, 1);
+    expect(d).not.toHaveProperty("usagePercent");
     // totalRequests remains uncapped
     expect(d.totalRequests).toBe(1100);
   });

@@ -21,8 +21,8 @@ async function seedConfiguration() {
 async function seedDashboardSummary(month: number, year: number) {
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, 10, 8, 500, 300, 1000, 800, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, 10, 8, 500, 300, 1000, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO NOTHING`,
     [month, year],
   );
@@ -168,11 +168,11 @@ test.describe("Daily Usage Drill-Down", () => {
 
     // Wait for the daily chart section to appear
     await expect(
-      page.getByRole("heading", { name: /daily premium requests/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
 
     // Wait for Recharts chart to render with bars
-    const chartSection = page.getByRole("heading", { name: /daily premium requests/i }).locator("../..");
+    const chartSection = page.getByRole("heading", { name: /daily aic units/i }).locator("../..");
     await expect(chartSection).toBeVisible();
 
     // Recharts 3 renders bars as SVG <path> elements with class "recharts-rectangle"
@@ -193,7 +193,7 @@ test.describe("Daily Usage Drill-Down", () => {
     );
 
     await expect(
-      page.getByRole("heading", { name: "Daily Usage — March 15, 2026" }),
+      page.getByRole("heading", { name: "Daily AIC Units — March 15, 2026" }),
     ).toBeVisible();
   });
 
@@ -209,10 +209,10 @@ test.describe("Daily Usage Drill-Down", () => {
 
     // Wait for data to load
     await expect(
-      page.getByRole("heading", { name: /daily usage/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
 
-    // Total Premium Requests: 180 (100 + 80)
+    // Total AIC Units: 180 (100 + 80)
     await expect(page.getByText("180")).toBeVisible();
     // Total Spending: $7.20
     await expect(page.getByText("$7.20")).toBeVisible();
@@ -257,10 +257,10 @@ test.describe("Daily Usage Drill-Down", () => {
       usersTable.getByRole("columnheader", { name: /department/i }),
     ).toBeVisible();
     await expect(
-      usersTable.getByRole("button", { name: /sort by requests/i }),
+      usersTable.getByRole("button", { name: /sort by aic units/i }),
     ).toBeVisible();
     await expect(
-      usersTable.getByRole("button", { name: /sort by spending/i }),
+      usersTable.getByRole("button", { name: /sort by aic cost/i }),
     ).toBeVisible();
 
     // Verify user-alpha row
@@ -309,7 +309,7 @@ test.describe("Daily Usage Drill-Down", () => {
 
     // Click Requests column to toggle to asc — user-beta (80) should be first
     await page
-      .getByRole("button", { name: /sort by requests/i })
+      .getByRole("button", { name: /sort by aic units/i })
       .click();
     const firstRowAsc = usersTable.locator("tbody tr").first();
     await expect(firstRowAsc.getByText("user-beta")).toBeVisible();
@@ -367,7 +367,7 @@ test.describe("Daily Usage Drill-Down", () => {
 
     // Wait for page to load (even empty state)
     await expect(
-      page.getByRole("heading", { name: /daily usage/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
 
     await page.getByRole("link", { name: /back to dashboard/i }).click();
@@ -383,11 +383,11 @@ test.describe("Daily Usage Drill-Down", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: "Daily Usage — January 28, 2020",
+        name: "Daily AIC Units — January 28, 2020",
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("No usage data for this day."),
+      page.getByText("No AIC CSV data for this day yet."),
     ).toBeVisible();
   });
 });

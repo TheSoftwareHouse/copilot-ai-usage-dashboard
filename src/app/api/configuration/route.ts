@@ -6,13 +6,6 @@ import { configurationSchema, updateConfigurationSchema } from "@/lib/validation
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
 import { handleRouteError } from "@/lib/api-helpers";
 import { seedDefaultAdmin } from "@/lib/auth";
-import { invalidatePremiumAllowanceCache } from "@/lib/get-premium-allowance";
-
-function maskApiKey(key: string | null): string | null {
-  if (!key) return null;
-  if (key.length <= 4) return "****";
-  return "*".repeat(key.length - 4) + key.slice(-4);
-}
 
 export async function GET() {
   const auth = await requireAdmin();
@@ -33,9 +26,6 @@ export async function GET() {
     return NextResponse.json({
       apiMode: config.apiMode,
       entityName: config.entityName,
-      premiumRequestsPerSeat: config.premiumRequestsPerSeat,
-      telemetryApiKey: maskApiKey(config.telemetryApiKey),
-      normSeatsCount: config.normSeatsCount,
       deviationWarningThreshold: Number(config.deviationWarningThreshold),
       deviationAlertThreshold: Number(config.deviationAlertThreshold),
       createdAt: config.createdAt,
@@ -82,12 +72,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const { apiMode, entityName, premiumRequestsPerSeat } = result.data;
+    const { apiMode, entityName } = result.data;
 
     const config = repository.create({
       apiMode: apiMode as ApiMode,
       entityName,
-      ...(premiumRequestsPerSeat !== undefined && { premiumRequestsPerSeat }),
     });
     const created = await repository.save(config);
 
@@ -98,7 +87,6 @@ export async function POST(request: Request) {
       {
         apiMode: created.apiMode,
         entityName: created.entityName,
-        premiumRequestsPerSeat: created.premiumRequestsPerSeat,
         createdAt: created.createdAt,
         updatedAt: created.updatedAt,
       },
@@ -134,9 +122,6 @@ export async function PUT(request: Request) {
   }
 
   const {
-    premiumRequestsPerSeat,
-    telemetryApiKey,
-    normSeatsCount,
     deviationWarningThreshold,
     deviationAlertThreshold,
   } = result.data;
@@ -165,13 +150,6 @@ export async function PUT(request: Request) {
       );
     }
 
-    existing.premiumRequestsPerSeat = premiumRequestsPerSeat;
-    if (telemetryApiKey !== undefined) {
-      existing.telemetryApiKey = telemetryApiKey;
-    }
-    if (normSeatsCount !== undefined) {
-      existing.normSeatsCount = normSeatsCount;
-    }
     if (deviationWarningThreshold !== undefined) {
       existing.deviationWarningThreshold = deviationWarningThreshold;
     }
@@ -180,14 +158,10 @@ export async function PUT(request: Request) {
     }
 
     const updated = await repository.save(existing);
-    invalidatePremiumAllowanceCache();
 
     return NextResponse.json({
       apiMode: updated.apiMode,
       entityName: updated.entityName,
-      premiumRequestsPerSeat: updated.premiumRequestsPerSeat,
-      telemetryApiKey: maskApiKey(updated.telemetryApiKey),
-      normSeatsCount: updated.normSeatsCount,
       deviationWarningThreshold: Number(updated.deviationWarningThreshold),
       deviationAlertThreshold: Number(updated.deviationAlertThreshold),
       createdAt: updated.createdAt,

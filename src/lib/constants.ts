@@ -3,8 +3,6 @@ export const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-export const PREMIUM_REQUESTS_PER_SEAT = 300;
-
 /** Maximum length for error messages stored in job_execution records. */
 export const ERROR_MESSAGE_MAX_LENGTH = 2000;
 

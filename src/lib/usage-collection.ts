@@ -1,299 +1,338 @@
-import { getDb } from "@/lib/db";
 import { ConfigurationEntity } from "@/entities/configuration.entity";
+import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
+import { CopilotUsageEntity, type UsageItem } from "@/entities/copilot-usage.entity";
+import { CopilotUsageSource, JobStatus, JobType, SeatStatus } from "@/entities/enums";
 import { JobExecutionEntity } from "@/entities/job-execution.entity";
-import {
-  CopilotSeatEntity,
-} from "@/entities/copilot-seat.entity";
-import {
-  CopilotUsageEntity,
-  type CopilotUsage,
-} from "@/entities/copilot-usage.entity";
-import { JobType, JobStatus, SeatStatus } from "@/entities/enums";
-import { fetchPremiumRequestUsage } from "@/lib/github-api";
-import { getInstallationToken, NoOrgConnectedError } from "@/lib/github-app-token";
-import { refreshDashboardMetrics } from "@/lib/dashboard-metrics";
 import { ERROR_MESSAGE_MAX_LENGTH } from "@/lib/constants";
+import { getDb } from "@/lib/db";
+import { fetchCopilotAiCreditUsage } from "@/lib/github-api";
+import { getInstallationToken, NoOrgConnectedError } from "@/lib/github-app-token";
 import { acquireJobLock } from "@/lib/job-lock";
+import { refreshDashboardMetrics } from "@/lib/dashboard-metrics";
 
 export interface UsageCollectionResult {
   skipped: boolean;
   reason?: string;
   jobExecutionId?: number;
-  status?: string;
+  status?: JobStatus;
   recordsProcessed?: number;
-  usersProcessed?: number;
-  usersErrored?: number;
   errorMessage?: string;
 }
 
-interface DateTuple {
+interface UsageCollectionOptions {
+  jobType: JobType.USAGE_COLLECTION | JobType.MONTH_RECOLLECTION;
+}
+
+interface ExistingUsageRow {
+  id: number;
+  seatId: number;
   day: number;
   month: number;
   year: number;
 }
 
-/**
- * Generate an inclusive list of dates from `start` to `end`.
- * Uses UTC to avoid timezone-related off-by-one issues.
- */
-function generateDateRange(start: DateTuple, end: DateTuple): DateTuple[] {
-  const dates: DateTuple[] = [];
-  const current = new Date(Date.UTC(start.year, start.month - 1, start.day));
-  const last = new Date(Date.UTC(end.year, end.month - 1, end.day));
+interface UsageAggregate {
+  id?: number;
+  seatId: number;
+  day: number;
+  month: number;
+  year: number;
+  source: CopilotUsageSource;
+  usageItems: UsageItem[];
+}
 
-  while (current <= last) {
-    dates.push({
-      day: current.getUTCDate(),
-      month: current.getUTCMonth() + 1,
-      year: current.getUTCFullYear(),
-    });
-    current.setUTCDate(current.getUTCDate() + 1);
+interface UsageCollectionFailure {
+  message: string;
+}
+
+function buildUsageKey(seatId: number, day: number, month: number, year: number): string {
+  return `${seatId}:${day}:${month}:${year}`;
+}
+
+function buildDayList(jobType: JobType.USAGE_COLLECTION | JobType.MONTH_RECOLLECTION): Array<{ day: number; month: number; year: number }> {
+  const now = new Date();
+  const month = now.getUTCMonth() + 1;
+  const year = now.getUTCFullYear();
+  const today = now.getUTCDate();
+
+  if (jobType === JobType.USAGE_COLLECTION) {
+    return [{ day: today, month, year }];
   }
 
-  return dates;
+  return Array.from({ length: today }, (_, index) => ({
+    day: index + 1,
+    month,
+    year,
+  }));
 }
 
-/**
- * Get the next day after a given date (UTC).
- */
-function nextDay(date: DateTuple): DateTuple {
-  const d = new Date(Date.UTC(date.year, date.month - 1, date.day));
-  d.setUTCDate(d.getUTCDate() + 1);
-  return {
-    day: d.getUTCDate(),
-    month: d.getUTCMonth() + 1,
-    year: d.getUTCFullYear(),
-  };
+function normalizeUsageItems(items: UsageItem[]): UsageItem[] {
+  const byModel = new Map<string, UsageItem>();
+
+  for (const item of items) {
+    const key = `${item.product}:${item.sku}:${item.model}:${item.unitType}`;
+    const existing = byModel.get(key);
+
+    if (!existing) {
+      byModel.set(key, { ...item });
+      continue;
+    }
+
+    existing.grossQuantity += item.grossQuantity;
+    existing.grossAmount += item.grossAmount;
+    existing.discountQuantity += item.discountQuantity;
+    existing.discountAmount += item.discountAmount;
+    existing.netQuantity += item.netQuantity;
+    existing.netAmount += item.netAmount;
+    existing.pricePerUnit =
+      existing.grossQuantity > 0 ? existing.grossAmount / existing.grossQuantity : 0;
+  }
+
+  return [...byModel.values()];
 }
 
-/**
- * Get today's date as a DateTuple (UTC).
- */
-function getToday(): DateTuple {
-  const now = new Date();
-  return {
-    day: now.getUTCDate(),
-    month: now.getUTCMonth() + 1,
-    year: now.getUTCFullYear(),
-  };
+function parseTimePeriod(value: string): { day: number; month: number; year: number } | null {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  return { day, month, year };
 }
 
-export async function executeUsageCollection(): Promise<UsageCollectionResult> {
+function buildSkipReasonMessage(reason: string): string {
+  if (reason === "no_configuration") {
+    return "Configuration not found. Complete first-run setup before collecting usage.";
+  }
+
+  if (reason === "no_org_connected") {
+    return "No GitHub App installation connected. Complete GitHub App setup before collecting usage.";
+  }
+
+  if (reason === "already_running") {
+    return "Usage collection is already running. Please wait for the current run to finish.";
+  }
+
+  return "Usage collection could not start.";
+}
+
+export function mapUsageCollectionSkipReason(reason: string): string {
+  return buildSkipReasonMessage(reason);
+}
+
+export async function executeUsageCollection(
+  options: UsageCollectionOptions,
+): Promise<UsageCollectionResult> {
   const dataSource = await getDb();
   const configRepository = dataSource.getRepository(ConfigurationEntity);
-  const jobRepository = dataSource.getRepository(JobExecutionEntity);
   const seatRepository = dataSource.getRepository(CopilotSeatEntity);
-  const usageRepository = dataSource.getRepository(CopilotUsageEntity);
+  const jobRepository = dataSource.getRepository(JobExecutionEntity);
 
-  // Check if configuration exists
   const config = await configRepository.findOne({ where: {} });
-  if (!config) {
-    console.warn("Usage collection skipped: configuration not found");
+  if (!config || !config.entityName || !config.apiMode) {
     return { skipped: true, reason: "no_configuration" };
   }
 
-  // Generate installation access token before acquiring lock
   let token: string;
   try {
     token = await getInstallationToken();
   } catch (error) {
     if (error instanceof NoOrgConnectedError) {
-      console.warn(`Usage collection skipped: ${error.message}`);
       return { skipped: true, reason: "no_org_connected" };
     }
+
     throw error;
   }
 
-  // Concurrency guard: atomically check for a running job and create one
-  const lockResult = await acquireJobLock(dataSource, JobType.USAGE_COLLECTION);
+  const lockResult = await acquireJobLock(dataSource, options.jobType);
   if (!lockResult.acquired) {
-    console.warn(`Usage collection skipped: ${lockResult.reason}`);
     return { skipped: true, reason: lockResult.reason };
   }
   const jobExecution = lockResult.jobExecution;
 
-  console.log(`Usage collection started (JobExecution #${jobExecution.id})`);
+  const activeSeats = await seatRepository.find({
+    where: { status: SeatStatus.ACTIVE },
+    select: { id: true, githubUsername: true },
+  });
 
-  try {
-    // Fetch all ACTIVE seats
-    const activeSeats = await seatRepository.find({
-      where: { status: SeatStatus.ACTIVE },
-    });
-
-    if (activeSeats.length === 0) {
-      console.log("No active seats found — completing with 0 records");
-      await jobRepository.save({
-        ...jobExecution,
-        status: JobStatus.SUCCESS,
-        completedAt: new Date(),
-        recordsProcessed: 0,
-      });
-
-      return {
-        skipped: false,
-        jobExecutionId: jobExecution.id,
-        status: JobStatus.SUCCESS,
-        recordsProcessed: 0,
-        usersProcessed: 0,
-        usersErrored: 0,
-      };
-    }
-
-    const today = getToday();
-    let totalRecordsProcessed = 0;
-    let usersProcessed = 0;
-    let usersErrored = 0;
-    const userErrors: string[] = [];
-
-    for (const seat of activeSeats) {
-      try {
-        // Determine the start date for this seat
-        const latestUsage = await usageRepository
-          .createQueryBuilder("usage")
-          .where("usage.seatId = :seatId", { seatId: seat.id })
-          .orderBy("usage.year", "DESC")
-          .addOrderBy("usage.month", "DESC")
-          .addOrderBy("usage.day", "DESC")
-          .getOne();
-
-        let startDate: DateTuple;
-        if (latestUsage) {
-          const latestDate: DateTuple = {
-            day: latestUsage.day,
-            month: latestUsage.month,
-            year: latestUsage.year,
-          };
-          const nextAfterLatest = nextDay(latestDate);
-          // Always re-fetch today to capture potentially incomplete data.
-          // If the latest stored date IS today, start from today (upsert).
-          // Otherwise start from the day after the latest stored date.
-          const latestIsToday =
-            latestDate.day === today.day &&
-            latestDate.month === today.month &&
-            latestDate.year === today.year;
-          startDate = latestIsToday ? today : nextAfterLatest;
-        } else {
-          // No existing data — start from today
-          startDate = today;
-        }
-
-        // Clamp: if latest stored date is in the future (e.g. from backfill),
-        // still re-fetch today so current-day data is never skipped.
-        const startTimestamp = Date.UTC(startDate.year, startDate.month - 1, startDate.day);
-        const todayTimestamp = Date.UTC(today.year, today.month - 1, today.day);
-        if (startTimestamp > todayTimestamp) {
-          startDate = today;
-        }
-
-        const dates = generateDateRange(startDate, today);
-        for (const date of dates) {
-          const response = await fetchPremiumRequestUsage({
-            apiMode: config.apiMode,
-            entityName: config.entityName,
-            username: seat.githubUsername,
-            day: date.day,
-            month: date.month,
-            year: date.year,
-          }, token);
-
-          // Upsert: insert or update on conflict
-          await usageRepository
-            .createQueryBuilder()
-            .insert()
-            .into(CopilotUsageEntity)
-            .values({
-              seatId: seat.id,
-              day: date.day,
-              month: date.month,
-              year: date.year,
-              usageItems: response.usageItems,
-            } as Partial<CopilotUsage>)
-            .orUpdate(["usageItems", "updatedAt"], ["seatId", "day", "month", "year"])
-            .execute();
-
-          totalRecordsProcessed++;
-        }
-
-        usersProcessed++;
-        console.log(
-          `Collected ${dates.length} day(s) for ${seat.githubUsername}`
-        );
-      } catch (error) {
-        usersErrored++;
-        const errorMsg =
-          error instanceof Error ? error.message : String(error);
-        userErrors.push(`${seat.githubUsername}: ${errorMsg}`);
-        console.error(
-          `Usage collection error for ${seat.githubUsername}: ${errorMsg}`
-        );
-      }
-    }
-
-    // Determine final status
-    const allFailed =
-      usersErrored > 0 && usersProcessed === 0;
-    const finalStatus = allFailed ? JobStatus.FAILURE : JobStatus.SUCCESS;
-    const errorMessage =
-      userErrors.length > 0
-        ? userErrors.join("; ").substring(0, ERROR_MESSAGE_MAX_LENGTH)
-        : undefined;
-
+  if (activeSeats.length === 0) {
     await jobRepository.save({
       ...jobExecution,
-      status: finalStatus,
+      status: JobStatus.NO_OP,
+      reason: "no_active_seats",
       completedAt: new Date(),
-      recordsProcessed: totalRecordsProcessed,
-      errorMessage: errorMessage ?? null,
+      recordsProcessed: 0,
     });
-
-    console.log(
-      `Usage collection completed: ${totalRecordsProcessed} records processed, ` +
-        `${usersProcessed} users succeeded, ${usersErrored} users errored`
-    );
-
-    // Refresh dashboard metrics for the current month after successful collection
-    if (finalStatus === JobStatus.SUCCESS) {
-      try {
-        await refreshDashboardMetrics(today.month, today.year);
-      } catch (metricsError) {
-        console.warn(
-          "Failed to refresh dashboard metrics after usage collection:",
-          metricsError instanceof Error ? metricsError.message : String(metricsError),
-        );
-      }
-    }
 
     return {
       skipped: false,
       jobExecutionId: jobExecution.id,
-      status: finalStatus,
-      recordsProcessed: totalRecordsProcessed,
-      usersProcessed,
-      usersErrored,
+      status: JobStatus.NO_OP,
+      recordsProcessed: 0,
+    };
+  }
+
+  try {
+    const seatByUsername = new Map<string, { id: number; githubUsername: string }>();
+    for (const seat of activeSeats) {
+      seatByUsername.set(seat.githubUsername.trim().toLowerCase(), seat);
+    }
+
+    const days = buildDayList(options.jobType);
+    const aggregatesByKey = new Map<string, UsageAggregate>();
+    const failures: UsageCollectionFailure[] = [];
+
+    for (const { day, month, year } of days) {
+      for (const seat of activeSeats) {
+        const result = await fetchCopilotAiCreditUsage(
+          {
+            apiMode: config.apiMode,
+            entityName: config.entityName,
+            year,
+            month,
+            day,
+            user: seat.githubUsername,
+          },
+          token,
+        );
+
+        const usageRecords = result.usageRecords;
+
+        if (result.kind === "partial_failure") {
+          failures.push({ message: result.failure.message });
+        }
+
+        for (const usageRecord of usageRecords) {
+          const period = parseTimePeriod(usageRecord.timePeriod);
+          if (!period) {
+            continue;
+          }
+
+          const mappedSeat = seatByUsername.get(usageRecord.user.trim().toLowerCase()) ?? seat;
+          const usageKey = buildUsageKey(mappedSeat.id, period.day, period.month, period.year);
+          const existingAggregate = aggregatesByKey.get(usageKey);
+
+          if (!existingAggregate) {
+            aggregatesByKey.set(usageKey, {
+              seatId: mappedSeat.id,
+              day: period.day,
+              month: period.month,
+              year: period.year,
+              source: CopilotUsageSource.GITHUB_API,
+              usageItems: normalizeUsageItems(usageRecord.usageItems),
+            });
+            continue;
+          }
+
+          existingAggregate.usageItems = normalizeUsageItems([
+            ...existingAggregate.usageItems,
+            ...usageRecord.usageItems,
+          ]);
+        }
+      }
+    }
+
+    const persistableRows = [...aggregatesByKey.values()];
+
+    if (persistableRows.length > 0) {
+      const whereClauses: string[] = [];
+      const parameters: Array<number> = [];
+
+      persistableRows.forEach((usageRow, index) => {
+        const offset = index * 4;
+        whereClauses.push(
+          `("seatId" = $${offset + 1} AND "day" = $${offset + 2} AND "month" = $${offset + 3} AND "year" = $${offset + 4})`,
+        );
+        parameters.push(usageRow.seatId, usageRow.day, usageRow.month, usageRow.year);
+      });
+
+      const existingRows: ExistingUsageRow[] = await dataSource.query(
+        `SELECT id, "seatId", "day", "month", "year"
+         FROM copilot_usage
+         WHERE ${whereClauses.join(" OR ")}`,
+        parameters,
+      );
+
+      const existingByKey = new Map<string, ExistingUsageRow>();
+      for (const row of existingRows) {
+        existingByKey.set(buildUsageKey(row.seatId, row.day, row.month, row.year), row);
+      }
+
+      for (const usageRow of persistableRows) {
+        const existing = existingByKey.get(
+          buildUsageKey(usageRow.seatId, usageRow.day, usageRow.month, usageRow.year),
+        );
+        if (existing) {
+          usageRow.id = existing.id;
+        }
+      }
+
+      await dataSource.manager.save(CopilotUsageEntity, persistableRows);
+    }
+
+    const status =
+      failures.length > 0
+        ? JobStatus.PARTIAL_FAILURE
+        : persistableRows.length === 0
+          ? JobStatus.NO_OP
+          : JobStatus.SUCCESS;
+
+    const firstFailureMessage = failures[0]?.message;
+    const errorMessage = firstFailureMessage
+      ? failures
+          .map((failure) => failure.message)
+          .join("; ")
+          .substring(0, ERROR_MESSAGE_MAX_LENGTH)
+      : null;
+
+    await jobRepository.save({
+      ...jobExecution,
+      status,
+      reason: status === JobStatus.NO_OP ? "no_usage_data" : null,
+      completedAt: new Date(),
+      recordsProcessed: persistableRows.length,
       errorMessage,
+    });
+
+    const now = new Date();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentYear = now.getUTCFullYear();
+    await refreshDashboardMetrics(currentMonth, currentYear);
+
+    return {
+      skipped: false,
+      jobExecutionId: jobExecution.id,
+      status,
+      recordsProcessed: persistableRows.length,
+      errorMessage: firstFailureMessage ?? undefined,
     };
   } catch (error) {
     const errorMessage =
-      error instanceof Error ? error.message : String(error);
-    const truncatedMessage = errorMessage.substring(
-      0,
-      ERROR_MESSAGE_MAX_LENGTH
-    );
+      (error instanceof Error ? error.message : String(error)).substring(
+        0,
+        ERROR_MESSAGE_MAX_LENGTH,
+      );
 
     await jobRepository.save({
       ...jobExecution,
       status: JobStatus.FAILURE,
       completedAt: new Date(),
-      errorMessage: truncatedMessage,
+      errorMessage,
     });
-
-    console.error(`Usage collection failed: ${truncatedMessage}`);
 
     return {
       skipped: false,
       jobExecutionId: jobExecution.id,
       status: JobStatus.FAILURE,
-      errorMessage: truncatedMessage,
+      errorMessage,
     };
   }
 }

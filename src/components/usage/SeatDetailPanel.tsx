@@ -6,12 +6,11 @@ import MonthFilter from "@/components/dashboard/MonthFilter";
 import SeatDailyChart from "@/components/usage/SeatDailyChart";
 import SeatModelTable from "@/components/usage/SeatModelTable";
 import UsageBreadcrumb from "@/components/usage/UsageBreadcrumb";
-import { UsageProgressBar } from "@/components/usage/UsageProgressBar";
+import UsageCostStatsCards from "@/components/usage/UsageCostStatsCards";
 import { MONTH_NAMES } from "@/lib/constants";
-import { calcUsagePercent } from "@/lib/usage-helpers";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths";
-import TelemetryUsageCharts from "@/components/dashboard/TelemetryUsageCharts";
+import type { UsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 interface SeatInfo {
   seatId: number;
@@ -25,6 +24,9 @@ interface SeatInfo {
 interface TeamAssociation {
   teamId: number;
   teamName: string;
+  allocationPercentage: number;
+  allocatedRequests: number;
+  allocatedGrossAmount: number;
 }
 
 interface DailyUsageEntry {
@@ -53,9 +55,9 @@ interface SeatDetailResponse {
   dailyUsage: DailyUsageEntry[];
   modelBreakdown: ModelBreakdownEntry[];
   teams: TeamAssociation[];
+  costStats: UsageCostMetrics;
   month: number;
   year: number;
-  premiumRequestsPerSeat?: number;
   normValue: number | null;
 }
 
@@ -160,8 +162,6 @@ export default function SeatDetailPanel({
   if (!data) return null;
 
   const { seat, summary, dailyUsage, modelBreakdown } = data;
-  const premiumRequestsPerSeat = data.premiumRequestsPerSeat ?? 300;
-  const usagePercent = calcUsagePercent(summary.totalRequests, premiumRequestsPerSeat);
   const fullName = formatName(seat.firstName, seat.lastName, "");
   const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
   const isEmpty =
@@ -178,9 +178,6 @@ export default function SeatDetailPanel({
         month={month}
         year={year}
       />
-
-      {/* Usage Progress Bar */}
-      <UsageProgressBar percent={usagePercent} />
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -214,6 +211,9 @@ export default function SeatDetailPanel({
                   >
                     {team.teamName}
                   </Link>
+                  <span className="ml-1 text-gray-400">({team.allocationPercentage}%)</span>
+                  <span className="ml-1 text-gray-400">Usage: {team.allocatedRequests.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
+                  <span className="ml-1 text-gray-400">Spending: {formatCurrency(team.allocatedGrossAmount)}</span>
                 </span>
               ))}
             </p>
@@ -229,53 +229,26 @@ export default function SeatDetailPanel({
         />
       </div>
 
+      <UsageCostStatsCards costStats={data.costStats} />
+
       {isEmpty ? (
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
-            No usage data available for {seat.githubUsername} in {monthLabel}.
-            Data will appear after the usage collection job runs.
+            {`No AIC CSV data available for ${seat.githubUsername} in ${monthLabel}.`}
           </p>
         </div>
       ) : (
         <>
-          {data.normValue === null && (
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4" role="status">
-              <p className="text-sm text-blue-700">
-                Usage norm unavailable — insufficient seat data for calculation
-              </p>
-            </div>
-          )}
-
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-gray-500">
-                Net Spending
-              </h2>
-              <p className="mt-2 text-3xl font-bold text-gray-900">
-                {formatCurrency(summary.netSpending)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-gray-500">
-                Total Requests
-              </h2>
-              <p className="mt-2 text-3xl font-bold text-gray-900">
-                {summary.totalRequests.toLocaleString()}
-              </p>
-            </div>
-          </div>
-
           {/* Daily Usage Chart */}
           <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">
-              Daily Usage
+              Daily AIC Units
             </h2>
             <div className="mt-4">
               <SeatDailyChart
                 dailyUsage={dailyUsage}
                 daysInMonth={daysInMonth}
-                normValue={data.normValue}
+                metricLabel="AIC Units"
               />
             </div>
           </div>
@@ -286,11 +259,16 @@ export default function SeatDetailPanel({
               Model Breakdown
             </h2>
             <div className="mt-4">
-              <SeatModelTable models={modelBreakdown} />
+              <SeatModelTable
+                models={modelBreakdown}
+                isAicMode={true}
+                seatId={seat.seatId}
+                month={month}
+                year={year}
+              />
             </div>
           </div>
 
-          <TelemetryUsageCharts month={month} year={year} githubUsername={seat.githubUsername} />
         </>
       )}
     </div>

@@ -386,7 +386,7 @@ test.describe("Department Management", () => {
     ).not.toBeVisible();
   });
 
-  test("department management table displays Usage % column", async ({
+  test("department management table shows seat counts and usage links", async ({
     page,
   }) => {
     const now = new Date();
@@ -395,7 +395,7 @@ test.describe("Department Management", () => {
 
     const deptId = await seedDepartment("Metrics Dept");
     const seatId = await seedSeatWithDepartment(deptId, "usage-user");
-    // 150 requests / (1 × 300) × 100 = 50%
+    // 150 AIC Units / (1 × 300) × 100 = 50%
     await seedUsage(seatId, 1, currentMonth, currentYear, [
       { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.04, grossQuantity: 150, grossAmount: 6.0, discountQuantity: 150, discountAmount: 6.0, netQuantity: 0, netAmount: 0 },
     ]);
@@ -403,19 +403,15 @@ test.describe("Department Management", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/management?tab=departments");
 
-    // Verify column headers
     const table = page.locator("table");
-    await expect(table.getByRole("columnheader", { name: /usage %/i })).toBeVisible();
 
-    // Verify row data
     const row = table.getByRole("row").filter({ hasText: "Metrics Dept" });
-    await expect(row.getByText("50%")).toBeVisible();
-
-    // Usage status indicator should appear next to the department name
-    await expect(row.getByRole("img", { name: "Moderate usage" })).toBeVisible();
+    await expect(row).toContainText("Metrics Dept");
+    await expect(row).toContainText("1");
+    await expect(row.getByRole("link", { name: /view department usage/i })).toBeVisible();
   });
 
-  test("department with no seats shows 0% usage", async ({ page }) => {
+  test("department with no seats shows zero seat count", async ({ page }) => {
     await seedDepartment("Empty Dept");
 
     await loginViaApi(page, "admin", "password123");
@@ -423,7 +419,8 @@ test.describe("Department Management", () => {
 
     const table = page.locator("table");
     const row = table.getByRole("row").filter({ hasText: "Empty Dept" });
-    await expect(row.getByText("0%")).toBeVisible();
+    await expect(row).toContainText("Empty Dept");
+    await expect(row).toContainText("0");
   });
 
   test("after deleting a department, assigned seats have departmentId cleared", async ({

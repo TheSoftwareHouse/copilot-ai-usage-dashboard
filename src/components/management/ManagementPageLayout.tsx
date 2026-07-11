@@ -3,17 +3,18 @@
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useCallback, useEffect } from "react";
 import ConfigurationTabContent from "@/components/management/ConfigurationTabContent";
+import UsageImportsPanel from "@/components/management/UsageImportsPanel";
 import DepartmentManagementPanel from "@/components/departments/DepartmentManagementPanel";
 import TeamManagementPanel from "@/components/teams/TeamManagementPanel";
 import UserManagementPanel from "@/components/users/UserManagementPanel";
 import AzureUserManagementNotice from "@/components/users/AzureUserManagementNotice";
 import SeatListPanel from "@/components/seats/SeatListPanel";
 import SeatJobStatusCards from "@/components/seats/SeatJobStatusCards";
-import LowUsageSeatsTable from "@/components/seats/LowUsageSeatsTable";
 import type { AuthMethod } from "@/lib/auth-config";
 
 const TABS = [
   { id: "seats", label: "Seats" },
+  { id: "usage-imports", label: "Usage Imports" },
   { id: "departments", label: "Departments" },
   { id: "teams", label: "Project Teams" },
   { id: "users", label: "Users" },
@@ -138,9 +139,19 @@ export default function ManagementPageLayout({ authMethod }: { authMethod: AuthM
           aria-labelledby="tab-seats"
           className="space-y-6"
         >
-          <LowUsageSeatsTable />
           <SeatJobStatusCards />
           <SeatListPanel />
+        </div>
+      )}
+
+      {activeTab === "usage-imports" && (
+        <div
+          role="tabpanel"
+          id="tabpanel-usage-imports"
+          aria-labelledby="tab-usage-imports"
+          className="space-y-6"
+        >
+          <UsageImportsPanel />
         </div>
       )}
     </div>

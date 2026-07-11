@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
@@ -24,13 +23,11 @@ export async function GET(request: NextRequest) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
-
     const rows: {
-      averageUsage: string | null;
-      medianUsage: string | null;
-      minUsage: string | null;
-      maxUsage: string | null;
+      averageRequests: string | null;
+      medianRequests: string | null;
+      minRequests: string | null;
+      maxRequests: string | null;
     }[] = await dataSource.query(
       `WITH seat_requests AS (
          SELECT
@@ -40,34 +37,26 @@ export async function GET(request: NextRequest) {
               jsonb_array_elements(cu."usageItems") AS item
          WHERE cu."month" = $1 AND cu."year" = $2
          GROUP BY cu."seatId"
-       ),
-       seat_usage AS (
-         SELECT
-           CASE WHEN $3 > 0
-             THEN total_requests / $3 * 100
-             ELSE 0
-           END AS usage_percent
-         FROM seat_requests
        )
        SELECT
-         ROUND(AVG(usage_percent)::numeric, 1) AS "averageUsage",
+         ROUND(AVG(total_requests)::numeric, 1) AS "averageRequests",
          ROUND(
-           (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY usage_percent))::numeric,
+           (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_requests))::numeric,
            1
-         ) AS "medianUsage",
-         ROUND(MIN(usage_percent)::numeric, 1) AS "minUsage",
-         ROUND(MAX(usage_percent)::numeric, 1) AS "maxUsage"
-       FROM seat_usage`,
-      [month, year, premiumRequestsPerSeat],
+         ) AS "medianRequests",
+         ROUND(MIN(total_requests)::numeric, 1) AS "minRequests",
+         ROUND(MAX(total_requests)::numeric, 1) AS "maxRequests"
+       FROM seat_requests`,
+      [month, year],
     );
 
     const row = rows[0];
 
     return NextResponse.json({
-      averageUsage: row?.averageUsage != null ? Number(row.averageUsage) : null,
-      medianUsage: row?.medianUsage != null ? Number(row.medianUsage) : null,
-      minUsage: row?.minUsage != null ? Number(row.minUsage) : null,
-      maxUsage: row?.maxUsage != null ? Number(row.maxUsage) : null,
+      averageRequests: row?.averageRequests != null ? Number(row.averageRequests) : null,
+      medianRequests: row?.medianRequests != null ? Number(row.medianRequests) : null,
+      minRequests: row?.minRequests != null ? Number(row.minRequests) : null,
+      maxRequests: row?.maxRequests != null ? Number(row.maxRequests) : null,
       month,
       year,
     });

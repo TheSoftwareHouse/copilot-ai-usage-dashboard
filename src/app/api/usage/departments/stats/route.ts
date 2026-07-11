@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
@@ -24,13 +23,11 @@ export async function GET(request: NextRequest) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
-
     const rows: {
-      averageUsage: string | null;
-      medianUsage: string | null;
-      minUsage: string | null;
-      maxUsage: string | null;
+      averageRequests: string | null;
+      medianRequests: string | null;
+      minRequests: string | null;
+      maxRequests: string | null;
     }[] = await dataSource.query(
       `WITH department_seats AS (
          SELECT cs."departmentId", cs.id AS "seatId"
@@ -52,38 +49,30 @@ export async function GET(request: NextRequest) {
          SELECT
            su."departmentId",
            COUNT(DISTINCT su."seatId") AS member_count,
-           COALESCE(SUM(LEAST(su.requests, $3)), 0) AS capped_total
+           COALESCE(SUM(su.requests), 0) AS total_requests
          FROM seat_usage su
          GROUP BY su."departmentId"
-       ),
-       dept_usage AS (
-         SELECT
-           CASE WHEN $3 > 0
-             THEN capped_total / (member_count * $3) * 100
-             ELSE 0
-           END AS usage_percent
-         FROM dept_aggregates
-         WHERE member_count > 0
        )
        SELECT
-         ROUND(AVG(usage_percent)::numeric, 1) AS "averageUsage",
+         ROUND(AVG(total_requests)::numeric, 1) AS "averageRequests",
          ROUND(
-           (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY usage_percent))::numeric,
+           (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_requests))::numeric,
            1
-         ) AS "medianUsage",
-         ROUND(MIN(usage_percent)::numeric, 1) AS "minUsage",
-         ROUND(MAX(usage_percent)::numeric, 1) AS "maxUsage"
-       FROM dept_usage`,
-      [month, year, premiumRequestsPerSeat],
+         ) AS "medianRequests",
+         ROUND(MIN(total_requests)::numeric, 1) AS "minRequests",
+         ROUND(MAX(total_requests)::numeric, 1) AS "maxRequests"
+       FROM dept_aggregates
+       WHERE member_count > 0`,
+      [month, year],
     );
 
     const row = rows[0];
 
     return NextResponse.json({
-      averageUsage: row?.averageUsage != null ? Number(row.averageUsage) : null,
-      medianUsage: row?.medianUsage != null ? Number(row.medianUsage) : null,
-      minUsage: row?.minUsage != null ? Number(row.minUsage) : null,
-      maxUsage: row?.maxUsage != null ? Number(row.maxUsage) : null,
+      averageRequests: row?.averageRequests != null ? Number(row.averageRequests) : null,
+      medianRequests: row?.medianRequests != null ? Number(row.medianRequests) : null,
+      minRequests: row?.minRequests != null ? Number(row.minRequests) : null,
+      maxRequests: row?.maxRequests != null ? Number(row.maxRequests) : null,
       month,
       year,
     });

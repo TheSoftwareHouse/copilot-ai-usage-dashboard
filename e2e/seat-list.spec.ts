@@ -176,17 +176,12 @@ test.describe("Seat List", () => {
     const devRow = table.locator("tr", { hasText: "devuser" });
     await expect(devRow.getByRole("button", { name: /Edit department/i })).toHaveText("Product");
 
-    // Verify Usage % column header is present
-    await expect(table.getByRole("columnheader", { name: "Usage %" })).toBeVisible();
+    // Verify AIC Units header is present
+    await expect(table.getByRole("columnheader", { name: "AIC Units" })).toBeVisible();
 
-    // Active seats should display a usage status indicator next to the username
-    const octoRow = page.locator("tr", { hasText: "octocat" });
-    await expect(octoRow.getByRole("img", { name: /usage/i }).first()).toBeVisible();
-
-    // Inactive seat should show N/A for usage and no indicator
+    // Inactive seat should show the current AI credits value for inactive seats
     const inactiveRow = page.locator("tr", { hasText: "inactiveuser" });
-    await expect(inactiveRow.getByText("N/A")).toBeVisible();
-    await expect(inactiveRow.getByRole("img", { name: /usage/i })).not.toBeVisible();
+    await expect(inactiveRow.getByText("0")).toBeVisible();
   });
 
   test("inactive seat displays correct status badge", async ({ page }) => {
@@ -256,7 +251,7 @@ test.describe("Job Status Cards on Seats Tab", () => {
     await clearAll();
   });
 
-  test("shows Seat Sync and Usage Collection cards with 'No runs recorded yet' when no executions exist", async ({
+  test("shows the Seat Sync card with 'No runs recorded yet' when no executions exist", async ({
     page,
   }) => {
     await loginViaApi(page, "admin", "password123");
@@ -267,15 +262,9 @@ test.describe("Job Status Cards on Seats Tab", () => {
       .filter({ hasText: "Seat Sync" });
     await expect(seatSyncCard).toBeVisible();
     await expect(seatSyncCard.getByText("No runs recorded yet")).toBeVisible();
-
-    const usageCard = page
-      .getByRole("article")
-      .filter({ hasText: "Usage Collection" });
-    await expect(usageCard).toBeVisible();
-    await expect(usageCard.getByText("No runs recorded yet")).toBeVisible();
   });
 
-  test("shows correct job execution data when seeded", async ({ page }) => {
+  test("shows correct seat sync job execution data when seeded", async ({ page }) => {
     await seedJobExecution(
       "seat_sync",
       "success",
@@ -283,13 +272,6 @@ test.describe("Job Status Cards on Seats Tab", () => {
       "2026-02-27T10:01:00Z",
       null,
       50
-    );
-    await seedJobExecution(
-      "usage_collection",
-      "failure",
-      "2026-02-27T08:00:00Z",
-      "2026-02-27T08:00:30Z",
-      "GitHub API returned 503 Service Unavailable"
     );
 
     await loginViaApi(page, "admin", "password123");
@@ -301,26 +283,14 @@ test.describe("Job Status Cards on Seats Tab", () => {
     await expect(seatSyncCard).toBeVisible();
     await expect(seatSyncCard.getByText("Success")).toBeVisible();
     await expect(seatSyncCard.getByText("50")).toBeVisible();
-
-    const usageCard = page
-      .getByRole("article")
-      .filter({ hasText: "Usage Collection" });
-    await expect(usageCard).toBeVisible();
-    await expect(usageCard.getByText("Failed")).toBeVisible();
-    await expect(
-      usageCard.getByText("GitHub API returned 503 Service Unavailable")
-    ).toBeVisible();
   });
 
-  test("Sync Now and Collect Now buttons are visible", async ({ page }) => {
+  test("seat sync action is visible", async ({ page }) => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/management?tab=seats");
 
     await expect(
       page.getByRole("button", { name: /trigger seat sync/i })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /trigger usage collection/i })
     ).toBeVisible();
   });
 
@@ -346,161 +316,11 @@ test.describe("Job Status Cards on Seats Tab", () => {
 
     // The inline error should be visible
     await expect(page.getByRole("alert")).toBeVisible();
-    await expect(
-      page.getByText(/failed to load job status/i)
-    ).toBeVisible();
+    await expect(page.getByText(/failed to load seat sync status \(500\)/i)).toBeVisible();
 
     // The seat list table should still render normally
     const table = page.locator("table");
     await expect(table).toBeVisible();
     await expect(table.getByText("octocat")).toBeVisible();
-  });
-});
-
-test.describe("Month Data Recollection Modal on Seats Tab", () => {
-  test.beforeEach(async () => {
-    await clearAll();
-    await seedConfiguration();
-    await seedTestUser("admin", "password123");
-  });
-
-  test.afterAll(async () => {
-    await clearAll();
-  });
-
-  test("Collect Specific Month button is visible on the Usage Collection card", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    const usageCard = page.getByRole("article").filter({ hasText: "Usage Collection" });
-    await expect(usageCard.getByRole("button", { name: "Collect Specific Month" })).toBeVisible();
-  });
-
-  test("clicking Collect Specific Month opens a modal with correct title and form controls", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole("heading", { name: "Month Data Recollection" })).toBeVisible();
-    await expect(dialog.locator("#recollection-month")).toBeVisible();
-    await expect(dialog.locator("#recollection-year")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /trigger month recollection/i })).toBeVisible();
-  });
-
-  test("modal closes on Escape key press", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("dialog")).not.toBeVisible();
-  });
-
-  test("modal closes on overlay click", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-
-    const overlay = page.getByTestId("modal-overlay");
-    await overlay.click({ position: { x: 10, y: 10 } });
-    await expect(page.getByRole("dialog")).not.toBeVisible();
-  });
-
-  test("modal closes on close button click", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-
-    await dialog.getByRole("button", { name: "Close" }).click();
-    await expect(dialog).not.toBeVisible();
-  });
-
-  test("shows status badge inside modal when a successful month recollection execution exists", async ({ page }) => {
-    await seedJobExecution(
-      "month_recollection",
-      "success",
-      "2026-02-27T14:00:00Z",
-      "2026-02-27T14:10:00Z",
-      null,
-      310
-    );
-
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText("Success")).toBeVisible();
-  });
-
-  test("modal stays open after a successful recollection and shows success status", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-
-    await page.route("**/api/jobs/month-recollection*", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          jobExecutionId: 1,
-          status: "success",
-          recordsProcessed: 50,
-          usersProcessed: 5,
-          usersErrored: 0,
-          errorMessage: null,
-        }),
-      })
-    );
-
-    await dialog.getByRole("button", { name: /trigger month recollection/i }).click();
-
-    await expect(dialog.getByText("Success")).toBeVisible();
-    await expect(dialog.getByText(/recollected 50 records/i)).toBeVisible();
-    await expect(dialog).toBeVisible();
-  });
-
-  test("modal stays open after a failed recollection and shows failure status", async ({ page }) => {
-    await loginViaApi(page, "admin", "password123");
-    await page.goto("/management?tab=seats");
-
-    await page.getByRole("button", { name: "Collect Specific Month" }).click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-
-    await page.route("**/api/jobs/month-recollection*", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          jobExecutionId: 2,
-          status: "failure",
-          recordsProcessed: 0,
-          usersProcessed: 0,
-          usersErrored: 0,
-          errorMessage: "GitHub API timeout",
-        }),
-      })
-    );
-
-    await dialog.getByRole("button", { name: /trigger month recollection/i }).click();
-
-    await expect(dialog.getByText("Failed")).toBeVisible();
-    await expect(dialog.getByText(/github api timeout/i)).toBeVisible();
-    await expect(dialog).toBeVisible();
   });
 });

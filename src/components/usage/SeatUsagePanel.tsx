@@ -5,8 +5,11 @@ import { useAsyncFetch } from "@/lib/hooks/useAsyncFetch";
 import SeatUsageTable from "@/components/usage/SeatUsageTable";
 import SeatUsageStatsCards from "@/components/usage/SeatUsageStatsCards";
 import SeatUsageRankings from "@/components/usage/SeatUsageRankings";
+import UsageCostStatsCards from "@/components/usage/UsageCostStatsCards";
 import Pagination from "@/components/usage/Pagination";
 import { MONTH_NAMES } from "@/lib/constants";
+import { isAicReportingMonth } from "@/lib/aic-reporting";
+import type { UsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 interface ModelEntry {
   model: string;
@@ -39,7 +42,7 @@ interface SeatUsageResponse {
   totalPages: number;
   month: number;
   year: number;
-  premiumRequestsPerSeat?: number;
+  costStats: UsageCostMetrics;
 }
 
 interface SeatUsagePanelProps {
@@ -56,6 +59,7 @@ function readSearchFromUrl(): string {
 const PAGE_SIZE = 20;
 
 export default function SeatUsagePanel({ month, year }: SeatUsagePanelProps) {
+  const isAicMode = isAicReportingMonth(month, year);
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState(() => readSearchFromUrl());
   const [search, setSearch] = useState(() => readSearchFromUrl());
@@ -129,8 +133,8 @@ export default function SeatUsagePanel({ month, year }: SeatUsagePanelProps) {
   if (loading) {
     return (
       <div className="space-y-4">
-        <SeatUsageStatsCards month={month} year={year} />
-        <SeatUsageRankings month={month} year={year} />
+        {!isAicMode && <SeatUsageStatsCards month={month} year={year} />}
+        {!isAicMode && <SeatUsageRankings month={month} year={year} />}
         {searchBox}
         <div className="flex items-center justify-center py-12" role="status">
           <p className="text-sm text-gray-500">Loading usage data…</p>
@@ -142,8 +146,8 @@ export default function SeatUsagePanel({ month, year }: SeatUsagePanelProps) {
   if (error) {
     return (
       <div className="space-y-4">
-        <SeatUsageStatsCards month={month} year={year} />
-        <SeatUsageRankings month={month} year={year} />
+        {!isAicMode && <SeatUsageStatsCards month={month} year={year} />}
+        {!isAicMode && <SeatUsageRankings month={month} year={year} />}
         {searchBox}
         <div
           className="rounded-lg border border-red-200 bg-red-50 p-6"
@@ -159,12 +163,13 @@ export default function SeatUsagePanel({ month, year }: SeatUsagePanelProps) {
     const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
     const emptyMessage = search
       ? "No seats match your search query."
-      : `No per-seat usage data available for ${monthLabel}. Data will appear after the usage collection job runs.`;
+      : `No per-seat usage data available for ${monthLabel}. Data will appear after usage data is imported.`;
 
     return (
       <div className="space-y-4">
-        <SeatUsageStatsCards month={month} year={year} />
-        <SeatUsageRankings month={month} year={year} />
+        {data && <UsageCostStatsCards costStats={data.costStats} />}
+        {!isAicMode && <SeatUsageStatsCards month={month} year={year} />}
+        {!isAicMode && <SeatUsageRankings month={month} year={year} />}
         {searchBox}
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
@@ -177,10 +182,11 @@ export default function SeatUsagePanel({ month, year }: SeatUsagePanelProps) {
 
   return (
     <div className="space-y-4">
-      <SeatUsageStatsCards month={month} year={year} />
-      <SeatUsageRankings month={month} year={year} />
+      <UsageCostStatsCards costStats={data.costStats} />
+      {!isAicMode && <SeatUsageStatsCards month={month} year={year} />}
+      {!isAicMode && <SeatUsageRankings month={month} year={year} />}
       {searchBox}
-      <SeatUsageTable seats={data.seats} month={month} year={year} premiumRequestsPerSeat={data.premiumRequestsPerSeat ?? 300} sortBy={sortBy} sortOrder={sortOrder} onSort={handleSortClick} />
+      <SeatUsageTable seats={data.seats} month={month} year={year} sortBy={sortBy} sortOrder={sortOrder} onSort={handleSortClick} />
       {data.totalPages > 1 && (
         <Pagination
           currentPage={data.page}

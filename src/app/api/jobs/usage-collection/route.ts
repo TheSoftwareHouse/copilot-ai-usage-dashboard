@@ -1,31 +1,37 @@
 import { NextResponse } from "next/server";
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
-import { executeUsageCollection } from "@/lib/usage-collection";
 import { handleRouteError } from "@/lib/api-helpers";
+import {
+  executeUsageCollection,
+  mapUsageCollectionSkipReason,
+} from "@/lib/usage-collection";
+import { JobType } from "@/entities/enums";
 
 export async function POST() {
   const auth = await requireAdmin();
   if (isAuthFailure(auth)) return auth;
 
   try {
-    const result = await executeUsageCollection();
+    const result = await executeUsageCollection({
+      jobType: JobType.USAGE_COLLECTION,
+    });
 
     if (result.skipped) {
       return NextResponse.json(
         {
-          error:
-            "Configuration not found. Complete first-run setup before collecting usage data.",
+          error: mapUsageCollectionSkipReason(result.reason ?? "unknown"),
+          skipped: true,
+          reason: result.reason ?? "unknown",
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
     return NextResponse.json({
+      skipped: false,
       jobExecutionId: result.jobExecutionId,
       status: result.status,
       recordsProcessed: result.recordsProcessed ?? null,
-      usersProcessed: result.usersProcessed ?? null,
-      usersErrored: result.usersErrored ?? null,
       errorMessage: result.errorMessage ?? null,
     });
   } catch (error) {

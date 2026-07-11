@@ -10,6 +10,8 @@ import {
   type ConnectionStatus,
 } from "@/lib/github-installation-status";
 
+export const runtime = "nodejs";
+
 type ApiConnectionStatus = ConnectionStatus | "not_installed";
 
 export async function GET() {

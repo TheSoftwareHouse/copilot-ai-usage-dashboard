@@ -152,7 +152,7 @@ describe("GET /api/usage/departments/[departmentId]", () => {
     expect(json.department.totalGrossAmount).toBeCloseTo(6.0, 2);
     expect(json.department.averageRequestsPerMember).toBe(75);
     // usagePercent = (150 / (2 * 300)) * 100 = 25
-    expect(json.department.usagePercent).toBe(25);
+    expect(json.department).not.toHaveProperty("usagePercent");
 
     expect(json.members).toHaveLength(2);
     expect(json.month).toBe(2);
@@ -178,7 +178,7 @@ describe("GET /api/usage/departments/[departmentId]", () => {
     expect(json.department.memberCount).toBe(2);
     expect(json.department.totalRequests).toBe(450);
     // usagePercent = (min(450,300) + min(0,300)) / (2 * 300) * 100 = 300 / 600 * 100 = 50
-    expect(json.department.usagePercent).toBe(50);
+    expect(json.department).not.toHaveProperty("usagePercent");
   });
 
   it("members are ordered by totalRequests DESC", async () => {
@@ -219,7 +219,7 @@ describe("GET /api/usage/departments/[departmentId]", () => {
     expect(json.department.totalRequests).toBe(0);
     expect(json.department.totalGrossAmount).toBe(0);
     expect(json.department.averageRequestsPerMember).toBe(0);
-    expect(json.department.usagePercent).toBe(0);
+    expect(json.department).not.toHaveProperty("usagePercent");
     expect(json.members).toEqual([]);
   });
 
@@ -237,6 +237,49 @@ describe("GET /api/usage/departments/[departmentId]", () => {
     expect(json.members[0].githubUsername).toBe("idle");
     expect(json.members[0].totalRequests).toBe(0);
     expect(json.members[0].totalGrossAmount).toBe(0);
+  });
+
+  it("uses the current seat department assignment for costStats scope", async () => {
+    await seedAuthSession();
+
+    const dept1 = await seedDepartment("Engineering");
+    const dept2 = await seedDepartment("Operations");
+    const seat = await seedSeat({
+      githubUsername: "reassigned",
+      githubUserId: 7001,
+      firstName: "Re",
+      lastName: "Assigned",
+      departmentId: dept1.id,
+    });
+
+    await seedUsage({
+      seatId: seat.id,
+      day: 1,
+      month: 2,
+      year: 2026,
+      usageItems: [{ product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.01, grossQuantity: 3000, grossAmount: 30, discountQuantity: 0, discountAmount: 0, netQuantity: 0, netAmount: 0 }],
+    });
+
+    const seatRepo = testDs.getRepository(CopilotSeatEntity);
+    await seatRepo.update(seat.id, { departmentId: dept2.id });
+
+    const { request: requestOne, context: contextOne } = makeGetRequest(String(dept1.id), { month: "2", year: "2026" });
+    const responseOne = await GET(requestOne as never, contextOne);
+    const jsonOne = await responseOne.json();
+
+    expect(jsonOne.department.memberCount).toBe(0);
+    expect(jsonOne.members).toEqual([]);
+    expect(jsonOne.costStats.totalCost).toBeCloseTo(0, 2);
+
+    const { request: requestTwo, context: contextTwo } = makeGetRequest(String(dept2.id), { month: "2", year: "2026" });
+    const responseTwo = await GET(requestTwo as never, contextTwo);
+    const jsonTwo = await responseTwo.json();
+
+    expect(jsonTwo.department.memberCount).toBe(1);
+    expect(jsonTwo.members[0].githubUsername).toBe("reassigned");
+    expect(jsonTwo.costStats.totalCost).toBeCloseTo(30, 2);
+    expect(jsonTwo.costStats.averageDailyCost).toBeCloseTo(1.07, 2);
+    expect(jsonTwo.costStats.predictedMonthCost).toBeCloseTo(21.4, 2);
   });
 
   it("defaults to current month/year when params are missing", async () => {
@@ -277,7 +320,7 @@ describe("GET /api/usage/departments/[departmentId]", () => {
     const json = await response.json();
 
     // department.usagePercent is capped: (min(1000,300) + min(100,300)) / (2 * 300) * 100 ≈ 66.67
-    expect(json.department.usagePercent).toBeCloseTo(66.67, 1);
+    expect(json.department).not.toHaveProperty("usagePercent");
     // department.totalRequests stays raw uncapped
     expect(json.department.totalRequests).toBe(1100);
     // members retain raw individual totals

@@ -7,11 +7,8 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ReferenceLine,
   ResponsiveContainer,
-  Cell,
 } from "recharts";
-import { getBarHexColor, calcUsagePercent } from "@/lib/usage-helpers";
 
 interface MemberChartEntry {
   seatId: number;
@@ -21,13 +18,11 @@ interface MemberChartEntry {
 
 interface DepartmentMemberChartProps {
   members: MemberChartEntry[];
-  premiumRequestsPerSeat: number;
   onBarClick?: (seatId: number) => void;
 }
 
 export default function DepartmentMemberChart({
   members,
-  premiumRequestsPerSeat,
   onBarClick,
 }: DepartmentMemberChartProps) {
   // Sort highest → lowest so the horizontal bar chart renders highest usage at the top
@@ -40,7 +35,7 @@ export default function DepartmentMemberChart({
   return (
     <div
       role="img"
-      aria-label="Department member usage chart showing each member's total premium requests relative to included allowance"
+      aria-label="Department member usage chart showing each member's total AIC Units"
     >
       <ResponsiveContainer width="100%" height={chartHeight}>
         <BarChart layout="vertical" data={sortedMembers}>
@@ -55,37 +50,21 @@ export default function DepartmentMemberChart({
           <Tooltip
             formatter={(value: number | undefined) => [
               (value ?? 0).toLocaleString(),
-              "Total Requests",
+              "AIC Units",
             ]}
             labelFormatter={(label) => String(label)}
           />
-          <ReferenceLine
-            x={premiumRequestsPerSeat}
-            stroke="#6b7280"
-            strokeDasharray="3 3"
-            label={{
-              value: `${premiumRequestsPerSeat} included`,
-              position: "top",
-              fontSize: 12,
-            }}
-          />
           <Bar
             dataKey="totalRequests"
-            name="Total Requests"
+            name="AIC Units"
+            fill="#3b82f6"
             cursor={onBarClick ? "pointer" : undefined}
             onClick={(_data: unknown, index: number) => {
               if (onBarClick && sortedMembers[index]) {
                 onBarClick(sortedMembers[index].seatId);
               }
             }}
-          >
-            {sortedMembers.map((member) => (
-              <Cell
-                key={member.seatId}
-                fill={getBarHexColor(calcUsagePercent(member.totalRequests, premiumRequestsPerSeat))}
-              />
-            ))}
-          </Bar>
+          />
         </BarChart>
       </ResponsiveContainer>
     </div>

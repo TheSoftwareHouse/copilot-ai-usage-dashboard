@@ -233,6 +233,54 @@ describe("GET /api/usage/seats", () => {
     expect(json2.totalPages).toBe(2);
   });
 
+  it("returns costStats from all selected-month usage even when paginated", async () => {
+    await seedAuthSession();
+
+    const seat1 = await seedSeat({
+      githubUsername: "page-user-1",
+      githubUserId: 9001,
+      firstName: "Page",
+      lastName: "One",
+    });
+    const seat2 = await seedSeat({
+      githubUsername: "page-user-2",
+      githubUserId: 9002,
+      firstName: "Page",
+      lastName: "Two",
+    });
+
+    await seedUsage({
+      seatId: seat1.id,
+      day: 1,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.01, grossQuantity: 1500, grossAmount: 15, discountQuantity: 0, discountAmount: 0, netQuantity: 1500, netAmount: 15 },
+      ],
+    });
+    await seedUsage({
+      seatId: seat2.id,
+      day: 5,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        { product: "Copilot", sku: "Premium", model: "GPT-4o", unitType: "requests", pricePerUnit: 0.01, grossQuantity: 1500, grossAmount: 15, discountQuantity: 0, discountAmount: 0, netQuantity: 1500, netAmount: 15 },
+      ],
+    });
+
+    const request = makeGetRequest({ month: "2", year: "2026", page: "1", pageSize: "1" });
+    const response = await GET(request as never);
+    const json = await response.json();
+
+    expect(json.seats).toHaveLength(1);
+    expect(json.total).toBe(2);
+    expect(json.month).toBe(2);
+    expect(json.year).toBe(2026);
+    expect(json.costStats.totalCost).toBeCloseTo(30, 2);
+    expect(json.costStats.averageDailyCost).toBeCloseTo(1.07, 2);
+    expect(json.costStats.predictedMonthCost).toBeCloseTo(21.4, 2);
+  });
+
   it("defaults to current month/year when params are missing", async () => {
     await seedAuthSession();
 
@@ -761,21 +809,15 @@ describe("GET /api/usage/seats", () => {
   });
 
   describe("deviation data", () => {
-    // Configuration: normSeatsCount=2, warningThreshold=1.5, alertThreshold=2.0
-    // Previous month (January 2026): two seats with usage to establish a norm
-    // Seat A: 310 total requests over 31 days → top seat
-    // Seat B: 155 total requests over 31 days → second seat
-    // Norm = (310 + 155) / 2 / 31 = 465 / 2 / 31 = 7.5
-    // Warning threshold: 7.5 * 1.5 = 11.25
-    // Alert threshold: 7.5 * 2.0 = 15.0
+    // Static thresholds: warning at 10 AIC Units, alert at 15 AIC Units.
 
     async function seedDeviationFixtures() {
       await seedConfiguration({
         apiMode: "organisation" as never,
         entityName: "test-org",
         normSeatsCount: 2,
-        deviationWarningThreshold: 1.5,
-        deviationAlertThreshold: 2.0,
+        deviationWarningThreshold: 10,
+        deviationAlertThreshold: 15,
       });
 
       // Previous month seats (January 2026) for norm calculation
@@ -800,14 +842,14 @@ describe("GET /api/usage/seats", () => {
         usageItems: [makeUsageItem(155)],
       });
 
-      // Current month (February 2026) - seats with varying usage levels
+      // Current month (February 2026) - seats with varying peak AIC usage
       const alertSeat = await seedSeat({
         githubUsername: "alert-user",
         githubUserId: 9010,
         firstName: "Alert",
         lastName: "User",
       });
-      // Day 5 has 20 requests → 20 / 7.5 = 2.67 → alert (>= 2.0)
+      // Day 5 has 20 AIC Units → alert (>= 15)
       await seedUsage({
         seatId: alertSeat.id,
         day: 5,
@@ -830,7 +872,7 @@ describe("GET /api/usage/seats", () => {
         firstName: "Warning",
         lastName: "User",
       });
-      // Day 10 has 12 requests → 12 / 7.5 = 1.6 → warning (>= 1.5 and < 2.0)
+      // Day 10 has 12 AIC Units → warning (>= 10 and < 15)
       await seedUsage({
         seatId: warningSeat.id,
         day: 10,
@@ -845,7 +887,7 @@ describe("GET /api/usage/seats", () => {
         firstName: "Normal",
         lastName: "User",
       });
-      // Day 1 has 5 requests → 5 / 7.5 = 0.67 → none
+      // Day 1 has 5 AIC Units → none (< 10)
       await seedUsage({
         seatId: normalSeat.id,
         day: 1,
@@ -885,8 +927,7 @@ describe("GET /api/usage/seats", () => {
       const alertUser = json.seats.find((s: { githubUsername: string }) => s.githubUsername === "alert-user");
       expect(alertUser).toBeDefined();
       expect(alertUser.deviationLevel).toBe("alert");
-      // Peak is day 5 with 20 requests, norm = 7.5 → multiplier = 20/7.5 ≈ 2.667
-      expect(alertUser.peakMultiplier).toBeCloseTo(20 / 7.5, 2);
+      expect(alertUser.peakMultiplier).toBe(20);
       expect(alertUser.peakDay).toBe(5);
     });
 
@@ -901,12 +942,11 @@ describe("GET /api/usage/seats", () => {
       const warningUser = json.seats.find((s: { githubUsername: string }) => s.githubUsername === "warning-user");
       expect(warningUser).toBeDefined();
       expect(warningUser.deviationLevel).toBe("warning");
-      // Peak is day 10 with 12 requests, norm = 7.5 → multiplier = 12/7.5 = 1.6
-      expect(warningUser.peakMultiplier).toBeCloseTo(12 / 7.5, 2);
+      expect(warningUser.peakMultiplier).toBe(12);
       expect(warningUser.peakDay).toBe(10);
     });
 
-    it("seat with normal usage returns deviationLevel 'none' with null peak values", async () => {
+    it("seat with normal usage returns deviationLevel 'none' with peak values preserved", async () => {
       await seedAuthSession();
       await seedDeviationFixtures();
 
@@ -917,22 +957,19 @@ describe("GET /api/usage/seats", () => {
       const normalUser = json.seats.find((s: { githubUsername: string }) => s.githubUsername === "normal-user");
       expect(normalUser).toBeDefined();
       expect(normalUser.deviationLevel).toBe("none");
-      // Normal seat has a peak (5 requests on day 1) but it's below threshold
-      // So peakMultiplier and peakDay are returned (not null) but level is "none"
-      expect(normalUser.peakMultiplier).toBeCloseTo(5 / 7.5, 2);
+      expect(normalUser.peakMultiplier).toBe(5);
       expect(normalUser.peakDay).toBe(1);
     });
 
-    it("all seats have deviationLevel 'none' when normValue is null (no previous month data)", async () => {
+    it("static thresholds still work when no previous month data exists", async () => {
       await seedAuthSession();
 
-      // Seed configuration but NO previous month usage data
       await seedConfiguration({
         apiMode: "organisation" as never,
         entityName: "test-org",
         normSeatsCount: 2,
-        deviationWarningThreshold: 1.5,
-        deviationAlertThreshold: 2.0,
+        deviationWarningThreshold: 150,
+        deviationAlertThreshold: 250,
       });
 
       const seat = await seedSeat({ githubUsername: "no-norm-user", githubUserId: 9020 });
@@ -952,11 +989,11 @@ describe("GET /api/usage/seats", () => {
       expect(json.seats).toHaveLength(1);
       expect(json.seats[0].deviationLevel).toBe("none");
       expect(json.seats[0].normValue).toBeNull();
-      expect(json.seats[0].peakMultiplier).toBeNull();
-      expect(json.seats[0].peakDay).toBeNull();
+      expect(json.seats[0].peakMultiplier).toBe(100);
+      expect(json.seats[0].peakDay).toBe(1);
     });
 
-    it("normValue is consistent across all seats in the response", async () => {
+    it("normValue remains null across all seats in the response", async () => {
       await seedAuthSession();
       await seedDeviationFixtures();
 
@@ -969,8 +1006,7 @@ describe("GET /api/usage/seats", () => {
       for (const seat of json.seats) {
         expect(seat.normValue).toBe(firstNorm);
       }
-      // Verify the actual norm value: (310 + 155) / 2 / 31 = 7.5
-      expect(firstNorm).toBeCloseTo(7.5, 2);
+      expect(firstNorm).toBeNull();
     });
 
     it("pagination still works with deviation fields present", async () => {
@@ -1016,8 +1052,8 @@ describe("GET /api/usage/seats", () => {
       expect(json.seats).toHaveLength(1);
       expect(json.seats[0].githubUsername).toBe("alert-user");
       expect(json.seats[0].deviationLevel).toBe("alert");
-      expect(json.seats[0].normValue).toBeCloseTo(7.5, 2);
-      expect(json.seats[0].peakMultiplier).toBeCloseTo(20 / 7.5, 2);
+      expect(json.seats[0].normValue).toBeNull();
+      expect(json.seats[0].peakMultiplier).toBe(20);
       expect(json.seats[0].peakDay).toBe(5);
     });
   });

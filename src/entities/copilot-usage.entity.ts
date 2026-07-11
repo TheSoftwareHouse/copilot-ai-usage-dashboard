@@ -1,4 +1,5 @@
 import { EntitySchema } from "typeorm";
+import { CopilotUsageSource } from "./enums";
 
 export interface UsageItem {
   product: string;
@@ -20,6 +21,7 @@ export interface CopilotUsage {
   day: number;
   month: number;
   year: number;
+  source: CopilotUsageSource;
   usageItems: UsageItem[];
   createdAt: Date;
   updatedAt: Date;
@@ -45,6 +47,11 @@ export const CopilotUsageEntity = new EntitySchema<CopilotUsage>({
     },
     year: {
       type: "smallint",
+    },
+    source: {
+      type: "enum",
+      enum: CopilotUsageSource,
+      default: CopilotUsageSource.CSV_IMPORT,
     },
     usageItems: {
       type: "jsonb",

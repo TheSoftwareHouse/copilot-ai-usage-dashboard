@@ -14,7 +14,6 @@ vi.mock("@/lib/db", () => ({
   getDb: async () => testDs,
 }));
 
-// Mock next/headers cookies for auth
 let mockCookieStore: Record<string, string> = {};
 vi.mock("next/headers", () => ({
   cookies: async () => ({
@@ -27,8 +26,17 @@ vi.mock("next/headers", () => ({
 
 const { GET } = await import("@/app/api/job-status/route");
 const { hashPassword, createSession, SESSION_COOKIE_NAME } = await import(
-  "@/lib/auth"
+  "@/lib/auth",
 );
+
+async function allowUsageCollectionStatusValues(): Promise<void> {
+  await testDs.query(
+    `ALTER TYPE "public"."job_execution_status_enum" ADD VALUE IF NOT EXISTS 'blocked'`,
+  );
+  await testDs.query(
+    `ALTER TYPE "public"."job_execution_status_enum" ADD VALUE IF NOT EXISTS 'no_op'`,
+  );
+}
 
 async function seedAuthSession(options?: { role?: string }): Promise<void> {
   const { UserEntity } = await import("@/entities/user.entity");
@@ -46,6 +54,7 @@ async function seedAuthSession(options?: { role?: string }): Promise<void> {
 describe("GET /api/job-status", () => {
   beforeAll(async () => {
     testDs = await getTestDataSource();
+    await allowUsageCollectionStatusValues();
   });
 
   afterAll(async () => {
@@ -71,30 +80,32 @@ describe("GET /api/job-status", () => {
     await cleanDatabase(testDs);
     mockCookieStore = {};
     await seedAuthSession({ role: UserRole.USER });
+
     const response = await GET();
     expect(response.status).toBe(403);
     const json = await response.json();
     expect(json.error).toBe("Admin access required");
   });
 
-  it("returns 200 with all null when no job executions exist", async () => {
+  it("returns active slots and retired historical slots when no executions exist", async () => {
     const response = await GET();
     expect(response.status).toBe(200);
 
     const json = await response.json();
     expect(json.seatSync).toBeNull();
-    expect(json.usageCollection).toBeNull();
     expect(json.teamCarryForward).toBeNull();
-    expect(json.monthRecollection).toBeNull();
+    expect(json.retiredJobs).toEqual({
+      usageCollection: null,
+      monthRecollection: null,
+    });
   });
 
   it("returns latest seat sync execution when multiple exist", async () => {
     const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
+      "@/entities/job-execution.entity",
     );
     const repo = testDs.getRepository(JobExecutionEntity);
 
-    // Older execution
     await repo.save({
       jobType: JobType.SEAT_SYNC,
       status: JobStatus.SUCCESS,
@@ -103,7 +114,6 @@ describe("GET /api/job-status", () => {
       recordsProcessed: 10,
     });
 
-    // Newer execution
     await repo.save({
       jobType: JobType.SEAT_SYNC,
       status: JobStatus.FAILURE,
@@ -121,154 +131,9 @@ describe("GET /api/job-status", () => {
     expect(json.seatSync.errorMessage).toBe("API rate limit exceeded");
   });
 
-  it("returns latest usage collection execution when multiple exist", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
-
-    await repo.save({
-      jobType: JobType.USAGE_COLLECTION,
-      status: JobStatus.FAILURE,
-      startedAt: new Date("2026-02-24T08:00:00Z"),
-      completedAt: new Date("2026-02-24T08:05:00Z"),
-      errorMessage: "Connection timeout",
-    });
-
-    await repo.save({
-      jobType: JobType.USAGE_COLLECTION,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-02-25T08:00:00Z"),
-      completedAt: new Date("2026-02-25T08:03:00Z"),
-      recordsProcessed: 42,
-    });
-
-    const response = await GET();
-    expect(response.status).toBe(200);
-
-    const json = await response.json();
-    expect(json.usageCollection).not.toBeNull();
-    expect(json.usageCollection.status).toBe("success");
-    expect(json.usageCollection.recordsProcessed).toBe(42);
-  });
-
-  it("returns both job types populated when executions exist for both", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
-
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-02-26T10:00:00Z"),
-      completedAt: new Date("2026-02-26T10:01:00Z"),
-      recordsProcessed: 50,
-    });
-
-    await repo.save({
-      jobType: JobType.USAGE_COLLECTION,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-02-26T12:00:00Z"),
-      completedAt: new Date("2026-02-26T12:02:00Z"),
-      recordsProcessed: 200,
-    });
-
-    const response = await GET();
-    expect(response.status).toBe(200);
-
-    const json = await response.json();
-    expect(json.seatSync).not.toBeNull();
-    expect(json.seatSync.jobType).toBe("seat_sync");
-    expect(json.usageCollection).not.toBeNull();
-    expect(json.usageCollection.jobType).toBe("usage_collection");
-    expect(json.teamCarryForward).toBeNull();
-    expect(json.monthRecollection).toBeNull();
-  });
-
-  it("includes errorMessage in response when status is FAILURE", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
-
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.FAILURE,
-      startedAt: new Date("2026-02-26T10:00:00Z"),
-      completedAt: new Date("2026-02-26T10:00:30Z"),
-      errorMessage: "GitHub API returned 503",
-    });
-
-    const response = await GET();
-    const json = await response.json();
-
-    expect(json.seatSync.status).toBe("failure");
-    expect(json.seatSync.errorMessage).toBe("GitHub API returned 503");
-  });
-
-  it("returns null for completedAt and recordsProcessed when not set", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
-
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.RUNNING,
-      startedAt: new Date("2026-02-26T10:00:00Z"),
-    });
-
-    const response = await GET();
-    const json = await response.json();
-
-    expect(json.seatSync).not.toBeNull();
-    expect(json.seatSync.status).toBe("running");
-    expect(json.seatSync.completedAt).toBeNull();
-    expect(json.seatSync.recordsProcessed).toBeNull();
-  });
-
-  it("returns only the latest execution per type, not older ones", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
-
-    // Create 3 seat sync executions
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-02-24T10:00:00Z"),
-      completedAt: new Date("2026-02-24T10:01:00Z"),
-      recordsProcessed: 5,
-    });
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.FAILURE,
-      startedAt: new Date("2026-02-25T10:00:00Z"),
-      completedAt: new Date("2026-02-25T10:01:00Z"),
-      errorMessage: "error",
-    });
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-02-26T10:00:00Z"),
-      completedAt: new Date("2026-02-26T10:01:00Z"),
-      recordsProcessed: 15,
-    });
-
-    const response = await GET();
-    const json = await response.json();
-
-    // Should return only the latest (Feb 26)
-    expect(json.seatSync.status).toBe("success");
-    expect(json.seatSync.recordsProcessed).toBe(15);
-    expect(json.seatSync.errorMessage).toBeNull();
-  });
-
   it("returns latest team carry-forward execution when it exists", async () => {
     const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
+      "@/entities/job-execution.entity",
     );
     const repo = testDs.getRepository(JobExecutionEntity);
 
@@ -290,50 +155,21 @@ describe("GET /api/job-status", () => {
     expect(json.teamCarryForward.recordsProcessed).toBe(12);
   });
 
-  it("returns all three job types when executions exist for all", async () => {
+  it("returns latest retired usage-collection and month-recollection executions for historical reads", async () => {
     const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
+      "@/entities/job-execution.entity",
     );
     const repo = testDs.getRepository(JobExecutionEntity);
 
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T10:00:00Z"),
-      completedAt: new Date("2026-03-01T10:01:00Z"),
-      recordsProcessed: 50,
-    });
     await repo.save({
       jobType: JobType.USAGE_COLLECTION,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T12:00:00Z"),
-      completedAt: new Date("2026-03-01T12:02:00Z"),
-      recordsProcessed: 200,
+      status: JobStatus.BLOCKED,
+      reason: "unsupported_installation_mode",
+      startedAt: new Date("2026-03-02T08:00:00Z"),
+      completedAt: new Date("2026-03-02T08:01:00Z"),
+      errorMessage: "Usage collection is unavailable for this installation mode.",
+      recordsProcessed: 0,
     });
-    await repo.save({
-      jobType: JobType.TEAM_CARRY_FORWARD,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T00:00:00Z"),
-      completedAt: new Date("2026-03-01T00:00:05Z"),
-      recordsProcessed: 8,
-    });
-
-    const response = await GET();
-    expect(response.status).toBe(200);
-
-    const json = await response.json();
-    expect(json.seatSync).not.toBeNull();
-    expect(json.usageCollection).not.toBeNull();
-    expect(json.teamCarryForward).not.toBeNull();
-    expect(json.teamCarryForward.jobType).toBe("team_carry_forward");
-    expect(json.teamCarryForward.recordsProcessed).toBe(8);
-  });
-
-  it("returns latest month recollection execution when it exists", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
 
     await repo.save({
       jobType: JobType.MONTH_RECOLLECTION,
@@ -343,69 +179,15 @@ describe("GET /api/job-status", () => {
       errorMessage: "GitHub API timeout",
     });
 
-    await repo.save({
-      jobType: JobType.MONTH_RECOLLECTION,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T14:00:00Z"),
-      completedAt: new Date("2026-03-01T14:10:00Z"),
-      recordsProcessed: 310,
-    });
-
     const response = await GET();
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.monthRecollection).not.toBeNull();
-    expect(json.monthRecollection.jobType).toBe("month_recollection");
-    expect(json.monthRecollection.status).toBe("success");
-    expect(json.monthRecollection.recordsProcessed).toBe(310);
-    expect(json.monthRecollection.errorMessage).toBeNull();
-  });
-
-  it("returns all four job types when executions exist for all", async () => {
-    const { JobExecutionEntity } = await import(
-      "@/entities/job-execution.entity"
-    );
-    const repo = testDs.getRepository(JobExecutionEntity);
-
-    await repo.save({
-      jobType: JobType.SEAT_SYNC,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T10:00:00Z"),
-      completedAt: new Date("2026-03-01T10:01:00Z"),
-      recordsProcessed: 50,
-    });
-    await repo.save({
-      jobType: JobType.USAGE_COLLECTION,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T12:00:00Z"),
-      completedAt: new Date("2026-03-01T12:02:00Z"),
-      recordsProcessed: 200,
-    });
-    await repo.save({
-      jobType: JobType.TEAM_CARRY_FORWARD,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T00:00:00Z"),
-      completedAt: new Date("2026-03-01T00:00:05Z"),
-      recordsProcessed: 8,
-    });
-    await repo.save({
-      jobType: JobType.MONTH_RECOLLECTION,
-      status: JobStatus.SUCCESS,
-      startedAt: new Date("2026-03-01T15:00:00Z"),
-      completedAt: new Date("2026-03-01T15:10:00Z"),
-      recordsProcessed: 620,
-    });
-
-    const response = await GET();
-    expect(response.status).toBe(200);
-
-    const json = await response.json();
-    expect(json.seatSync).not.toBeNull();
-    expect(json.usageCollection).not.toBeNull();
-    expect(json.teamCarryForward).not.toBeNull();
-    expect(json.monthRecollection).not.toBeNull();
-    expect(json.monthRecollection.jobType).toBe("month_recollection");
-    expect(json.monthRecollection.recordsProcessed).toBe(620);
+    expect(json.retiredJobs.usageCollection).not.toBeNull();
+    expect(json.retiredJobs.usageCollection.jobType).toBe("usage_collection");
+    expect(json.retiredJobs.usageCollection.reason).toBe("unsupported_installation_mode");
+    expect(json.retiredJobs.monthRecollection).not.toBeNull();
+    expect(json.retiredJobs.monthRecollection.jobType).toBe("month_recollection");
+    expect(json.retiredJobs.monthRecollection.status).toBe("failure");
   });
 });

@@ -5,13 +5,12 @@ import MonthFilter from "@/components/dashboard/MonthFilter";
 import TeamDailyChart from "@/components/usage/TeamDailyChart";
 import TeamMemberTable from "@/components/usage/TeamMemberTable";
 import UsageBreadcrumb from "@/components/usage/UsageBreadcrumb";
-import { UsageProgressBar } from "@/components/usage/UsageProgressBar";
+import UsageCostStatsCards from "@/components/usage/UsageCostStatsCards";
 import { MONTH_NAMES } from "@/lib/constants";
-import { formatCurrency } from "@/lib/format-helpers";
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths";
-import TelemetryUsageCharts from "@/components/dashboard/TelemetryUsageCharts";
 import { memberMatchesSearch } from "@/lib/usage-helpers";
 import type { MemberEntry } from "@/lib/types";
+import type { UsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 interface TeamInfo {
   teamId: number;
@@ -19,9 +18,9 @@ interface TeamInfo {
   memberCount: number;
   totalRequests: number;
   totalGrossAmount: number;
+  totalCost: number;
   averageRequestsPerMember: number;
   averageGrossAmountPerMember: number;
-  usagePercent?: number;
 }
 
 interface MemberDailyUsage {
@@ -34,9 +33,9 @@ interface TeamDetailResponse {
   team: TeamInfo;
   members: MemberEntry[];
   dailyUsagePerMember: MemberDailyUsage[];
+  costStats: UsageCostMetrics;
   month: number;
   year: number;
-  premiumRequestsPerSeat?: number;
 }
 
 interface TeamDetailPanelProps {
@@ -150,8 +149,6 @@ export default function TeamDetailPanel({
   if (!data) return null;
 
   const { team, members, dailyUsagePerMember } = data;
-  const premiumRequestsPerSeat = data.premiumRequestsPerSeat ?? 300;
-  const usagePercent = team.usagePercent ?? 0;
   const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
   const hasMembers = members.length > 0;
 
@@ -174,9 +171,6 @@ export default function TeamDetailPanel({
         year={year}
       />
 
-      {/* Usage Progress Bar */}
-      <UsageProgressBar percent={usagePercent} />
-
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -197,6 +191,8 @@ export default function TeamDetailPanel({
         />
       </div>
 
+      <UsageCostStatsCards costStats={data.costStats} />
+
       {!hasMembers ? (
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
@@ -205,37 +201,6 @@ export default function TeamDetailPanel({
         </div>
       ) : (
         <>
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-gray-500">
-                Total Requests
-              </h2>
-              <p className="mt-2 text-3xl font-bold text-gray-900">
-                {team.totalRequests.toLocaleString()}
-              </p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-gray-500">
-                Avg Requests/Member
-              </h2>
-              <p className="mt-2 text-3xl font-bold text-gray-900">
-                {team.averageRequestsPerMember.toLocaleString(undefined, {
-                  minimumFractionDigits: 1,
-                  maximumFractionDigits: 1,
-                })}
-              </p>
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-medium text-gray-500">
-                Total Spending
-              </h2>
-              <p className="mt-2 text-3xl font-bold text-gray-900">
-                {formatCurrency(team.totalGrossAmount)}
-              </p>
-            </div>
-          </div>
-
           {/* Member Search */}
           <div>
             <label htmlFor="team-member-search" className="sr-only">
@@ -254,12 +219,13 @@ export default function TeamDetailPanel({
           {/* Daily Usage Chart */}
           <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">
-              Daily Usage by Member
+              Daily AIC Units by Member
             </h2>
             <div className="mt-4">
               <TeamDailyChart
                 dailyUsagePerMember={filteredDailyUsage}
                 daysInMonth={daysInMonth}
+                metricLabel="AIC Units"
               />
             </div>
           </div>
@@ -277,12 +243,16 @@ export default function TeamDetailPanel({
                 Members
               </h2>
               <div className="mt-4">
-                <TeamMemberTable members={filteredMembers} premiumRequestsPerSeat={premiumRequestsPerSeat} month={month} year={year} />
+                <TeamMemberTable
+                  members={filteredMembers}
+                  month={month}
+                  year={year}
+                  showAllocationColumns={true}
+                />
               </div>
             </div>
           )}
 
-          <TelemetryUsageCharts month={month} year={year} teamId={teamId} />
         </>
       )}
     </div>

@@ -1,6 +1,6 @@
-# Copilot Collections Dashboard
+# Copilot AI Usage Dashboard
 
-**Take control of your GitHub Copilot spending.** Copilot Collections Dashboard gives engineering leaders full visibility into how their organization uses GitHub Copilot — across seats, teams, and departments — so they can optimize adoption and manage premium request costs before they spiral.
+**Take control of your GitHub Copilot spending.** Copilot AI Usage Dashboard gives engineering leaders full visibility into how their organization uses GitHub Copilot — across seats, teams, and departments — so they can optimize adoption and manage AI Credits (AIC) costs before they spiral.
 
 Built with [Copilot Collections](https://copilot-collections.tsh.io) by [The Software House](https://tsh.io).
 
@@ -8,44 +8,45 @@ Built with [Copilot Collections](https://copilot-collections.tsh.io) by [The Sof
 
 <p align="center">
   <img src="images/dashboard.png" width="32%" />
-  <img src="images/seats-usage.png" width="32%" />
-  <img src="images/department-usage.png" width="32%" />
+  <img src="images/seats.png" width="32%" />
+  <img src="images/department.png" width="32%" />
 </p>
 
 ## 🤔 The Problem
 
 GitHub Copilot is a powerful tool, but organizations adopting it at scale face real challenges:
 
-- 💸 **No spending visibility** — GitHub provides limited insight into per-user and per-team premium request costs. You see the bill, not the breakdown.
+- 💸 **No spending visibility** — GitHub provides limited insight into per-user and per-team AI Credits usage costs. You see the bill, not the breakdown.
 - 🪑 **Inactive seats burn money** — Seats assigned to users who rarely (or never) use Copilot keep costing the same as active ones. Identifying them manually is tedious.
 - 👥 **No team-level accountability** — Engineering managers can't see how their team's usage compares to others, making it impossible to justify costs or encourage adoption.
-- 🚨 **Premium request overruns** — Each seat includes an allowance of premium requests. When users exceed it, the organization pays extra — often without realizing it until the invoice arrives.
+- 🚨 **AIC cost spikes** — Usage can jump quickly for specific seats or teams, and without clear breakdowns those spikes often surface only when the invoice arrives.
 - 📉 **Historical tracking is missing** — Team compositions change month-over-month, but there's no built-in way to track usage trends over time as people move between teams.
 
 <p align="center">
-  <img src="images/team-usage.png" width="49%" />
-  <img src="images/seat-usage.png" width="49%" />
+  <img src="images/seats.png" width="49%" />
+  <img src="images/sync.png" width="49%" />
 </p>
 
 ## ✨ Key Features
 
 ### 📊 Dashboard & Analytics
-- **Monthly usage overview** with total seats, active seats, spending, and premium request metrics at a glance
-- **Per-user breakdown** — see exactly how many premium requests each person used and what it cost
-- **Allowance tracking** — see included vs. used vs. paid premium requests with visual progress indicators
+- **Monthly usage overview** with total seats, active seats, spending, and AIC metrics at a glance
+- **Per-user breakdown** — see exactly how many AIC units each person used and what it cost
+- **AIC totals tracking** — monitor imported AIC units and gross AIC spending over time
 - **Model-level cost breakdown** — understand spending per AI model (Claude Sonnet, GPT-4o, etc.)
 - **Most & least active users** — instantly spot top contributors and inactive seats
-- **Spending breakdown** — separate seat license costs from paid premium request overage
+- **Spending breakdown** — separate seat license costs from AIC usage spending
 - **Monthly snapshots** — team compositions are tracked per month so historical comparisons remain accurate even when people move between teams
 
 ### ⚙️ Automated Data Collection
 - **Background jobs** run on a configurable schedule (default: daily at midnight UTC)
+- **Team carry-forward** copies team member allocations into the new month for consistent historical reporting
 - **Seat sync** pulls the latest seat list from GitHub
-- **Usage collection** fetches premium request data for each active seat
 
 ### 💺 Organisation Management
 - **Teams** — group seats into teams, track usage per team, and compare across teams
 - **Departments** — organize seats into departments for higher-level reporting
+- **Usage Imports** — import AIC usage CSV exports through the management interface
 - **Editable metadata** — assign first name, last name, and department to each seat
 
 ### 🔐 Security & Authentication
@@ -66,8 +67,8 @@ GitHub Copilot is a powerful tool, but organizations adopting it at scale face r
 | `DATABASE_URL` | PostgreSQL connection string (e.g. `postgres://user:pass@host:5432/dbname`) |
 | `ENCRYPTION_KEY` | 64-char hex string for encrypting GitHub App credentials. Generate with `openssl rand -hex 32` |
 | `APP_BASE_URL` | Public URL of the application (e.g. `https://copilot-dashboard.yourcompany.com`) |
-| `DEFAULT_ADMIN_USERNAME` | Username for the initial admin account |
-| `DEFAULT_ADMIN_PASSWORD` | Password for the initial admin account |
+| `DEFAULT_ADMIN_USERNAME` | Username for the initial local credentials-mode admin account. Not needed for Azure mode, where access is managed through Azure AD. |
+| `DEFAULT_ADMIN_PASSWORD` | Password for the initial local credentials-mode admin account. Not needed for Azure mode, where access is managed through Azure AD. |
 
 #### Authentication
 
@@ -82,17 +83,18 @@ When using Azure Entra ID (`AUTH_METHOD=azure`):
 |----------|-------------|
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_CLIENT_ID` | Azure AD application (client) ID |
-| `AZURE_REDIRECT_URI` | OAuth callback URL (e.g. `https://copilot-dashboard.yourcompany.com/api/auth/azure/callback`) |
+| `AZURE_REDIRECT_URI` | OAuth callback URL (e.g. `https://copilot-dashboard.yourcompany.com/api/auth/callback`) |
 
 #### Data Sync
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SYNC_CRON_SCHEDULE` | Cron expression for background sync jobs | `0 0 * * *` (daily at midnight) |
+| `SYNC_CRON_SCHEDULE` | Preferred cron expression for background sync jobs. If no schedule variable is set, instrumentation uses `0 0 * * *` (daily at midnight UTC). | `0 0 * * *` |
+| `SYNC_INTERVAL_HOURS` / `SEAT_SYNC_INTERVAL_HOURS` | Legacy compatibility variables. Instrumentation converts a whole-number interval to a cron schedule when `SYNC_CRON_SCHEDULE` is not set. | — |
 | `SEAT_SYNC_ENABLED` | Enable automatic seat synchronization | `true` |
-| `USAGE_COLLECTION_ENABLED` | Enable automatic usage data collection | `true` |
-| `SEAT_SYNC_RUN_ON_STARTUP` | Trigger seat sync immediately on app start | `false` |
-| `USAGE_COLLECTION_RUN_ON_STARTUP` | Trigger usage collection immediately on app start | `false` |
+| `SEAT_SYNC_RUN_ON_STARTUP` | Trigger the sync cycle — team carry-forward and seat sync — after startup | `false` |
+
+`SYNC_CRON_SCHEDULE` takes precedence over the legacy interval variables. Docker Compose currently supplies `SEAT_SYNC_INTERVAL_HOURS=1` by default, so set `SYNC_CRON_SCHEDULE` explicitly when using Compose if you want the daily default.
 
 > **Note:** No GitHub token environment variable is required — GitHub App credentials are stored encrypted in the database and configured through the setup wizard.
 
@@ -130,22 +132,9 @@ DEFAULT_ADMIN_PASSWORD=changeme
 docker compose up
 ```
 
-This starts PostgreSQL, runs migrations automatically, and launches the dashboard on `http://localhost:3000`.
+This starts PostgreSQL, the application, and Adminer at `http://localhost:8080`. The image runs database migrations before starting Next.js, launches the dashboard on `http://localhost:3000`, and exposes a health check at `http://localhost:3000/api/health`.
 
 **3. Complete the setup wizard** — open the app in your browser, log in with your admin credentials, and follow the guided GitHub App setup.
-
-### ☸️ Kubernetes (Helm)
-
-A Helm chart is included for Kubernetes deployments:
-
-```bash
-helm install copilot-dashboard ./helm/copilot-dashboard \
-  --set env.DATABASE_URL="postgresql://..." \
-  --set env.ENCRYPTION_KEY="..." \
-  --set env.APP_BASE_URL="https://copilot-dashboard.yourcompany.com" \
-  --set env.DEFAULT_ADMIN_USERNAME="admin" \
-  --set env.DEFAULT_ADMIN_PASSWORD="changeme"
-```
 
 ### 🛠️ Development Setup
 
@@ -157,11 +146,13 @@ npm install
 docker compose up postgres -d
 
 # Run database migrations
-npx ts-node -P tsconfig.typeorm.json scripts/run-migrations.ts
+npm run typeorm:migrate
 
 # Start development server
 npm run dev
 ```
+
+Use `npm run typeorm:generate` to generate a migration and `npm run typeorm:revert` to revert the latest migration.
 
 ### Available Scripts
 
@@ -169,11 +160,39 @@ npm run dev
 |---------|-------------|
 | `npm run dev` | Start Next.js dev server |
 | `npm run build` | Production build |
+| `npm run start` | Start the production server |
 | `npm run lint` | ESLint |
-| `npx tsc --noEmit` | Type checking |
-| `npx vitest run` | Unit/integration tests |
-| `npx playwright test` | E2E tests (credentials mode) |
-| `npx playwright test --config playwright.azure.config.ts` | E2E tests (Azure mode) |
+| `npm run test` | Run unit/integration tests |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run test:e2e` | Run E2E tests (credentials mode) |
+| `npm run typeorm` | Run the TypeORM CLI wrapper |
+| `npm run typeorm:generate` | Generate a TypeORM migration |
+| `npm run typeorm:migrate` | Run pending TypeORM migrations |
+| `npm run typeorm:revert` | Revert the latest TypeORM migration |
+| `npm run seed:demo:may-july-2026` | Replace reporting data with deterministic synthetic demo data for May-July 2026 |
+| `npx tsc --noEmit` | Type checking (no package script is defined) |
+| `npm run test:e2e -- --config playwright.azure.config.ts` | Run E2E tests (Azure mode) |
+
+### May-July 2026 Demo Seed (Local Only)
+
+Use the command below to destructively replace reporting data with a deterministic synthetic corpus for May 1 through July 31, 2026:
+
+```bash
+CONFIRM_REPORTING_DATA_REPLACEMENT=may-july-2026 npm run seed:demo:may-july-2026
+```
+
+Safety and scope rules:
+
+- Missing or incorrect `CONFIRM_REPORTING_DATA_REPLACEMENT` fails before mutation.
+- The command always refuses non-loopback hosts. Only `localhost`, `127.0.0.1`, and `::1` are accepted.
+- The database name must include `local`, `demo`, or `test`.
+- `ALLOW_DEMO_SEED=1` bypasses only the database-name rule. It cannot bypass loopback-host validation or confirmation.
+- The command deletes all rows from exactly these reporting tables in this order: `copilot_usage`, `team_member_snapshot`, `dashboard_monthly_summary`, `copilot_seat`, `team`, `department`.
+- The command preserves these protected tables: `configuration`, `app_user`, `session`, `github_app`, `job_execution`, `import_history`.
+- Seed shape is fixed: 36 seats, 4 departments (9 seats each), 6 teams, and one usage row per seat/date from May 1 to July 31 (92 dates, 3,312 rows total; May 1,116 rows, June 1,080 rows, July 1,116 rows).
+- Raw AIC bounds are fixed: each seat/day totals 2,000-6,000 AIC; with 36 seats, each date aggregate is 72,000-216,000 AIC.
+- On any failure before commit, the transaction rolls back to the prior reporting state.
+- After a successful commit, prior reporting data is intentionally replaced; recovery requires restoring a backup taken before running the command.
 
 ---
 

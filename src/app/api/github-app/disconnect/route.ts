@@ -7,6 +7,8 @@ import { handleRouteError } from "@/lib/api-helpers";
 import { decrypt } from "@/lib/encryption";
 import { generateAppJwt } from "@/lib/github-jwt";
 
+export const runtime = "nodejs";
+
 export async function POST() {
   try {
     const auth = await requireAdmin();

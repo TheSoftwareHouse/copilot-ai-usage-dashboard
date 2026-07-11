@@ -7,9 +7,6 @@ import GitHubConnectionCard from "@/components/management/GitHubConnectionCard";
 interface ConfigurationData {
   apiMode: string;
   entityName: string;
-  premiumRequestsPerSeat?: number;
-  telemetryApiKey?: string | null;
-  normSeatsCount?: number;
   deviationWarningThreshold?: number;
   deviationAlertThreshold?: number;
 }
@@ -97,9 +94,6 @@ export default function ConfigurationTabContent() {
       <ConfigurationForm
         mode="edit"
         initialValues={{
-          premiumRequestsPerSeat: config.premiumRequestsPerSeat,
-          telemetryApiKey: config.telemetryApiKey,
-          normSeatsCount: config.normSeatsCount,
           deviationWarningThreshold: config.deviationWarningThreshold,
           deviationAlertThreshold: config.deviationAlertThreshold,
         }}

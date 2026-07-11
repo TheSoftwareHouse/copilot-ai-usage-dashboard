@@ -217,16 +217,14 @@ describe("refreshDashboardMetrics", () => {
     expect(usernames).not.toContain("heavy-3");
   });
 
-  it("correctly calculates total spending as netAmount + seatBaseCost", async () => {
+  it("correctly calculates total spending as grossAmount + seatBaseCost", async () => {
     const seat1 = await seedSeat(testDs, "user-1");
     const seat2 = await seedSeat(testDs, "user-2");
 
-    // user-1: gross=5+3=8, discount=1+0.5=1.5, net=4+2.5=6.5
     await seedUsage(testDs, seat1, 1, 2, 2026, [
       makeUsageItem("Claude Sonnet 4.5", 10, 5.0, 2, 1.0),
       makeUsageItem("GPT-4o", 20, 3.0, 1, 0.5),
     ]);
-    // user-2: gross=2, discount=0.5, net=1.5
     await seedUsage(testDs, seat2, 1, 2, 2026, [
       makeUsageItem("Claude Sonnet 4.5", 5, 2.0, 1, 0.5),
     ]);
@@ -236,10 +234,41 @@ describe("refreshDashboardMetrics", () => {
     const repo = testDs.getRepository(DashboardMonthlySummaryEntity);
     const summary = await repo.findOne({ where: { month: 2, year: 2026 } });
 
-    // netAmount total = 6.5 + 1.5 = 8, seatBaseCost = 2 active × $19 = 38
-    // totalSpending = 8 + 38 = 46
+    // grossAmount total = 5 + 3 + 2 = 10, seatBaseCost = 2 active × $19 = 38
+    // totalSpending = 10 + 38 = 48
     expect(Number(summary!.seatBaseCost)).toBe(38);
-    expect(Number(summary!.totalSpending)).toBe(46);
+    expect(Number(summary!.totalSpending)).toBe(48);
+  });
+
+  it("uses grossAmount for AIC months starting in May 2026", async () => {
+    const seatId = await seedSeat(testDs, "aic-user");
+
+    await seedUsage(testDs, seatId, 2, 5, 2026, [
+      {
+        product: "Copilot",
+        sku: "AIC",
+        model: "GPT-4o",
+        unitType: "requests",
+        pricePerUnit: 0.5,
+        grossQuantity: 10,
+        grossAmount: 5,
+        discountQuantity: 0,
+        discountAmount: 0,
+        netQuantity: 0,
+        netAmount: 0,
+      },
+    ]);
+
+    await refreshDashboardMetrics(5, 2026);
+
+    const repo = testDs.getRepository(DashboardMonthlySummaryEntity);
+    const summary = await repo.findOne({ where: { month: 5, year: 2026 } });
+
+    expect(summary).not.toBeNull();
+    expect(summary!.modelUsage[0].totalAmount).toBe(5);
+    expect(summary!.mostActiveUsers[0].totalSpending).toBe(5);
+    expect(Number(summary!.totalSpending)).toBe(24);
+    expect(summary!.totalAiCredits).toBe(10);
   });
 
   it("upsert updates existing row rather than creating duplicate", async () => {
@@ -283,8 +312,7 @@ describe("refreshDashboardMetrics", () => {
     // No usage, but 1 active seat → seatBaseCost=19, totalSpending=19
     expect(Number(summary!.seatBaseCost)).toBe(19);
     expect(Number(summary!.totalSpending)).toBe(19);
-    expect(summary!.totalPremiumRequests).toBe(0);
-    expect(summary!.includedPremiumRequestsUsed).toBe(0);
+    expect(summary!.totalAiCredits).toBe(0);
     expect(summary!.modelUsage).toEqual([]);
     expect(summary!.mostActiveUsers).toEqual([]);
     expect(summary!.leastActiveUsers).toEqual([]);
@@ -336,7 +364,7 @@ describe("refreshDashboardMetrics", () => {
     expect(summary!.mostActiveUsers[0].totalSpending).toBe(5.0);
   });
 
-  it("correctly computes total premium requests as uncapped sum", async () => {
+  it("correctly computes total AIC credits as uncapped sum", async () => {
     const seat1 = await seedSeat(testDs, "user-1");
     const seat2 = await seedSeat(testDs, "user-2");
 
@@ -358,10 +386,10 @@ describe("refreshDashboardMetrics", () => {
     const summary = await repo.findOne({ where: { month: 2, year: 2026 } });
 
     // Total uncapped: 400 + 100 = 500
-    expect(summary!.totalPremiumRequests).toBe(500);
+    expect(summary!.totalAiCredits).toBe(500);
   });
 
-  it("correctly computes included premium requests from discountQuantity", async () => {
+  it("uses grossQuantity for AIC credits even when discountQuantity is present", async () => {
     const seat1 = await seedSeat(testDs, "user-1");
     const seat2 = await seedSeat(testDs, "user-2");
 
@@ -382,11 +410,11 @@ describe("refreshDashboardMetrics", () => {
     const repo = testDs.getRepository(DashboardMonthlySummaryEntity);
     const summary = await repo.findOne({ where: { month: 2, year: 2026 } });
 
-    // Included used = SUM(discountQuantity) = 50 + 30 + 20 = 100
-    expect(summary!.includedPremiumRequestsUsed).toBe(100);
+    expect(summary!.totalAiCredits).toBe(500);
+    expect(Number(summary!.totalSpending)).toBe(63);
   });
 
-  it("handles discountQuantity equal to grossQuantity (fully discounted)", async () => {
+  it("handles discountQuantity equal to grossQuantity without changing AIC totals", async () => {
     const seatId = await seedSeat(testDs, "user-1");
 
     // All 300 requests are discounted
@@ -399,9 +427,49 @@ describe("refreshDashboardMetrics", () => {
     const repo = testDs.getRepository(DashboardMonthlySummaryEntity);
     const summary = await repo.findOne({ where: { month: 2, year: 2026 } });
 
-    expect(summary!.totalPremiumRequests).toBe(300);
-    expect(summary!.includedPremiumRequestsUsed).toBe(300);
-    // netAmount = 0, seatBaseCost = 19, totalSpending = 19
-    expect(Number(summary!.totalSpending)).toBe(19);
+    expect(summary!.totalAiCredits).toBe(300);
+    // grossAmount = 15, seatBaseCost = 19, totalSpending = 34
+    expect(Number(summary!.totalSpending)).toBe(34);
+  });
+
+  it("produces equivalent summary with injected EntityManager", async () => {
+    const seat1 = await seedSeat(testDs, "manager-user-1");
+    const seat2 = await seedSeat(testDs, "manager-user-2");
+
+    await seedUsage(testDs, seat1, 5, 6, 2026, [
+      makeUsageItem("GPT-4o", 24, 8.4),
+      makeUsageItem("Claude Sonnet 4.5", 12, 6.3),
+    ]);
+    await seedUsage(testDs, seat2, 7, 6, 2026, [
+      makeUsageItem("GPT-4o", 30, 10.5),
+    ]);
+
+    const repo = testDs.getRepository(DashboardMonthlySummaryEntity);
+
+    await refreshDashboardMetrics(6, 2026);
+    const defaultSummary = await repo.findOne({ where: { month: 6, year: 2026 } });
+    expect(defaultSummary).not.toBeNull();
+
+    await repo.delete({ month: 6, year: 2026 });
+
+    await testDs.transaction(async (manager) => {
+      await refreshDashboardMetrics(6, 2026, manager);
+    });
+
+    const managerSummary = await repo.findOne({ where: { month: 6, year: 2026 } });
+    expect(managerSummary).not.toBeNull();
+
+    expect(managerSummary).toMatchObject({
+      month: defaultSummary!.month,
+      year: defaultSummary!.year,
+      totalSeats: defaultSummary!.totalSeats,
+      activeSeats: defaultSummary!.activeSeats,
+      totalAiCredits: defaultSummary!.totalAiCredits,
+      modelUsage: defaultSummary!.modelUsage,
+      mostActiveUsers: defaultSummary!.mostActiveUsers,
+      leastActiveUsers: defaultSummary!.leastActiveUsers,
+    });
+    expect(Number(managerSummary!.totalSpending)).toBe(Number(defaultSummary!.totalSpending));
+    expect(Number(managerSummary!.seatBaseCost)).toBe(Number(defaultSummary!.seatBaseCost));
   });
 });

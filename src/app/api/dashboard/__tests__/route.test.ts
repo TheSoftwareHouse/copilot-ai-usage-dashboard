@@ -9,6 +9,7 @@ import type { CopilotSeat } from "@/entities/copilot-seat.entity";
 import { CopilotUsageEntity } from "@/entities/copilot-usage.entity";
 import type { CopilotUsage } from "@/entities/copilot-usage.entity";
 import { SeatStatus } from "@/entities/enums";
+import * as dashboardMetrics from "@/lib/dashboard-metrics";
 import {
   getTestDataSource,
   cleanDatabase,
@@ -66,8 +67,7 @@ async function seedSummary(
     activeSeats: 8,
     totalSpending: 500.0,
     seatBaseCost: 152.0,
-    totalPremiumRequests: 1200,
-    includedPremiumRequestsUsed: 900,
+    totalAiCredits: 1200,
     modelUsage: [
       { model: "GPT-4o", totalRequests: 100, totalAmount: 300 },
       { model: "Claude Sonnet 4.5", totalRequests: 50, totalAmount: 200 },
@@ -113,6 +113,7 @@ describe("GET /api/dashboard", () => {
   beforeEach(async () => {
     await cleanDatabase(testDs);
     mockCookieStore = {};
+    vi.restoreAllMocks();
   });
 
   it("returns 401 without session", async () => {
@@ -147,15 +148,18 @@ describe("GET /api/dashboard", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
 
+    expect(json.metricMode).toBe("aic");
     expect(json.totalSeats).toBe(10);
     expect(json.activeSeats).toBe(8);
     expect(json.totalSpending).toBe(500);
     expect(json.seatBaseCost).toBe(152);
-    expect(json.includedPremiumRequests).toBe(2400);
-    expect(json.includedPremiumRequestsUsed).toBe(900);
-    expect(json.includedPremiumRequestsRemaining).toBe(1500);
-    expect(json.totalPremiumRequests).toBe(1200);
-    expect(json.paidPremiumRequests).toBe(300);
+    expect(json).not.toHaveProperty("legacyIncludedRequests");
+    expect(json).not.toHaveProperty("legacyIncludedUsed");
+    expect(json).not.toHaveProperty("legacyIncludedRemaining");
+    expect(json.totalAiCredits).toBe(1200);
+    expect(json).not.toHaveProperty("legacyTotalRequests");
+    expect(json).not.toHaveProperty("legacyPaidRequests");
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
     expect(json.modelUsage).toHaveLength(2);
     expect(json.modelUsage[0].model).toBe("GPT-4o");
     expect(json.mostActiveUsers).toHaveLength(1);
@@ -166,7 +170,7 @@ describe("GET /api/dashboard", () => {
     expect(json.leastActiveUsers[0].githubUsername).toBe("low-user");
     expect(json.leastActiveUsers[0].totalSpending).toBe(5);
     expect(json.leastActiveUsers[0].seatId).toBe(2);
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json).not.toHaveProperty("usagePercent");
     expect(json.month).toBe(2);
     expect(json.year).toBe(2026);
   });
@@ -179,21 +183,228 @@ describe("GET /api/dashboard", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
 
+    expect(json.metricMode).toBe("aic");
     expect(json.totalSeats).toBe(0);
     expect(json.activeSeats).toBe(0);
     expect(json.totalSpending).toBe(0);
     expect(json.seatBaseCost).toBe(0);
-    expect(json.includedPremiumRequests).toBe(0);
-    expect(json.includedPremiumRequestsUsed).toBe(0);
-    expect(json.includedPremiumRequestsRemaining).toBe(0);
-    expect(json.totalPremiumRequests).toBe(0);
-    expect(json.paidPremiumRequests).toBe(0);
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json).not.toHaveProperty("legacyIncludedRequests");
+    expect(json).not.toHaveProperty("legacyIncludedUsed");
+    expect(json).not.toHaveProperty("legacyIncludedRemaining");
+    expect(json.totalAiCredits).toBe(0);
+    expect(json).not.toHaveProperty("legacyTotalRequests");
+    expect(json).not.toHaveProperty("legacyPaidRequests");
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
+    expect(json.summaryState).toBe("empty");
+    expect(json.summaryWarnings).toEqual([]);
     expect(json.modelUsage).toEqual([]);
     expect(json.mostActiveUsers).toEqual([]);
     expect(json.leastActiveUsers).toEqual([]);
     expect(json.month).toBe(6);
     expect(json.year).toBe(2025);
+  });
+
+  it("returns costStats for selected-month raw gross usage", async () => {
+    await seedAuthSession();
+
+    const seat = await seedSeat({ githubUsername: "cost-user" });
+    await seedUsage({
+      seatId: seat.id,
+      day: 1,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "Premium",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.01,
+          grossQuantity: 1500,
+          grossAmount: 15,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+    await seedUsage({
+      seatId: seat.id,
+      day: 5,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "Premium",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.01,
+          grossQuantity: 1500,
+          grossAmount: 15,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+
+    const request = makeGetRequest({ month: "2", year: "2026" });
+    const response = await GET(request as never);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.month).toBe(2);
+    expect(json.year).toBe(2026);
+    expect(json.costStats.totalCost).toBeCloseTo(30, 2);
+    expect(json.costStats.averageDailyCost).toBeCloseTo(1.07, 2);
+    expect(json.costStats.predictedMonthCost).toBeCloseTo(21.4, 2);
+    expect(json.costStats.workingDays).toBe(20);
+    expect(json.costStats.calendarDays).toBe(28);
+  });
+
+  it("lazily rebuilds May 2026+ data when the summary row is missing", async () => {
+    await seedAuthSession();
+
+    const seat = await seedSeat({ githubUsername: "octocat" });
+    await seedUsage({
+      seatId: seat.id,
+      day: 2,
+      month: 5,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "AIC",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.5,
+          grossQuantity: 10,
+          grossAmount: 5,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+
+    const request = makeGetRequest({ month: "5", year: "2026" });
+    const response = await GET(request as never);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.metricMode).toBe("aic");
+    expect(json.summaryState).toBe("rebuilt");
+    expect(json.summaryWarnings).toEqual([]);
+    expect(json.totalSeats).toBe(1);
+    expect(json.activeSeats).toBe(1);
+    expect(json.totalAiCredits).toBe(10);
+    expect(json.totalSpending).toBe(24);
+    expect(json.dailyUsage).toEqual([{ day: 2, totalRequests: 10 }]);
+  });
+
+  it("returns a pending warning when raw May 2026+ usage still cannot materialize a summary", async () => {
+    await seedAuthSession();
+
+    const seat = await seedSeat({ githubUsername: "warning-user" });
+    await seedUsage({
+      seatId: seat.id,
+      day: 3,
+      month: 5,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "AIC",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.5,
+          grossQuantity: 4,
+          grossAmount: 2,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+
+    vi.spyOn(dashboardMetrics, "refreshDashboardMetrics").mockRejectedValueOnce(
+      new Error("summary refresh failed"),
+    );
+
+    const request = makeGetRequest({ month: "5", year: "2026" });
+    const response = await GET(request as never);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.metricMode).toBe("aic");
+    expect(json.summaryState).toBe("pending");
+    expect(json.summaryWarnings[0]).toContain("summary refresh failed");
+    expect(json.totalSeats).toBe(0);
+    expect(json.totalAiCredits).toBe(0);
+  });
+
+  it("returns an empty current-month response using the active metric mode", async () => {
+    await seedAuthSession();
+
+    const now = new Date();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentYear = now.getUTCFullYear();
+
+    const request = makeGetRequest({
+      month: String(currentMonth),
+      year: String(currentYear),
+    });
+    const response = await GET(request as never);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.metricMode).toBe("aic");
+    expect(json.summaryState).toBe("empty");
+    expect(json.summaryWarnings).toEqual([]);
+    expect(json.totalSeats).toBe(0);
+    expect(json.dailyUsage).toEqual([]);
+  });
+
+  it("keeps pre-May 2026 empty-state behavior unchanged when the summary row is missing", async () => {
+    await seedAuthSession();
+
+    const seat = await seedSeat({ githubUsername: "legacy-user" });
+    await seedUsage({
+      seatId: seat.id,
+      day: 4,
+      month: 4,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "AIC",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.5,
+          grossQuantity: 7,
+          grossAmount: 3.5,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+
+    const request = makeGetRequest({ month: "4", year: "2026" });
+    const response = await GET(request as never);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.summaryState).toBe("empty");
+    expect(json.summaryWarnings).toEqual([]);
+    expect(json.totalSeats).toBe(0);
+    expect(json.dailyUsage).toEqual([]);
   });
 
   it("handles explicit month and year query parameters", async () => {
@@ -224,22 +435,21 @@ describe("GET /api/dashboard", () => {
 
     expect(json).toHaveProperty("totalSeats");
     expect(json).toHaveProperty("activeSeats");
+    expect(json).toHaveProperty("metricMode");
     expect(json).toHaveProperty("totalSpending");
     expect(json).toHaveProperty("seatBaseCost");
-    expect(json).toHaveProperty("includedPremiumRequests");
-    expect(json).toHaveProperty("includedPremiumRequestsUsed");
-    expect(json).toHaveProperty("includedPremiumRequestsRemaining");
-    expect(json).toHaveProperty("totalPremiumRequests");
-    expect(json).toHaveProperty("paidPremiumRequests");
-    expect(json).toHaveProperty("premiumRequestsPerSeat");
-    expect(json).toHaveProperty("previousIncludedPremiumRequests");
-    expect(json).toHaveProperty("previousIncludedPremiumRequestsUsed");
+    expect(json).toHaveProperty("totalAiCredits");
+    expect(json).not.toHaveProperty("legacyTotalRequests");
+    expect(json).not.toHaveProperty("legacyIncludedRequests");
+    expect(json).not.toHaveProperty("legacyIncludedUsed");
+    expect(json).not.toHaveProperty("legacyIncludedRemaining");
+    expect(json).not.toHaveProperty("legacyPaidRequests");
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
     expect(json).toHaveProperty("modelUsage");
     expect(json).toHaveProperty("mostActiveUsers");
     expect(json).toHaveProperty("leastActiveUsers");
     expect(json).toHaveProperty("dailyUsage");
     expect(json).toHaveProperty("previousDailyUsage");
-    expect(json).toHaveProperty("topDailySpendings");
     expect(json).toHaveProperty("month");
     expect(json).toHaveProperty("year");
   });
@@ -262,15 +472,14 @@ describe("GET /api/dashboard", () => {
   it("returns previous month data when previous summary exists", async () => {
     await seedAuthSession();
     await seedSummary({ month: 2, year: 2026 });
-    await seedSummary({ month: 1, year: 2026, activeSeats: 5, includedPremiumRequestsUsed: 400 });
+    await seedSummary({ month: 1, year: 2026, activeSeats: 5 });
 
     const request = makeGetRequest({ month: "2", year: "2026" });
     const response = await GET(request as never);
     const json = await response.json();
 
-    // Previous month: 5 active seats × 300 = 1500
-    expect(json.previousIncludedPremiumRequests).toBe(1500);
-    expect(json.previousIncludedPremiumRequestsUsed).toBe(400);
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequests");
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequestsUsed");
   });
 
   it("returns null for previous month data when no previous summary exists", async () => {
@@ -280,23 +489,21 @@ describe("GET /api/dashboard", () => {
     const request = makeGetRequest({ month: "2", year: "2026" });
     const response = await GET(request as never);
     const json = await response.json();
-
-    expect(json.previousIncludedPremiumRequests).toBeNull();
-    expect(json.previousIncludedPremiumRequestsUsed).toBeNull();
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequests");
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequestsUsed");
   });
 
   it("handles year boundary — January fetches December of previous year", async () => {
     await seedAuthSession();
     await seedSummary({ month: 1, year: 2026 });
-    await seedSummary({ month: 12, year: 2025, activeSeats: 6, includedPremiumRequestsUsed: 500 });
+    await seedSummary({ month: 12, year: 2025, activeSeats: 6 });
 
     const request = makeGetRequest({ month: "1", year: "2026" });
     const response = await GET(request as never);
     const json = await response.json();
 
-    // Previous month (Dec 2025): 6 active seats × 300 = 1800
-    expect(json.previousIncludedPremiumRequests).toBe(1800);
-    expect(json.previousIncludedPremiumRequestsUsed).toBe(500);
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequests");
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequestsUsed");
   });
 
   it("returns null previous month data in empty-state response", async () => {
@@ -305,9 +512,8 @@ describe("GET /api/dashboard", () => {
     const request = makeGetRequest({ month: "6", year: "2025" });
     const response = await GET(request as never);
     const json = await response.json();
-
-    expect(json.previousIncludedPremiumRequests).toBeNull();
-    expect(json.previousIncludedPremiumRequestsUsed).toBeNull();
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequests");
+    expect(json).not.toHaveProperty("previousIncludedPremiumRequestsUsed");
   });
 
   it("dailyUsage is empty array when summary exists but no copilot_usage rows", async () => {
@@ -501,78 +707,29 @@ describe("GET /api/dashboard", () => {
     expect(json.previousDailyUsage).toEqual([]);
   });
 
-  it("topDailySpendings is empty array when summary exists but no copilot_usage rows", async () => {
+  it("dailyUsage aggregates across multiple seats for the same day", async () => {
     await seedAuthSession();
     await seedSummary({ month: 2, year: 2026 });
 
-    const request = makeGetRequest({ month: "2", year: "2026" });
-    const response = await GET(request as never);
-    const json = await response.json();
-
-    expect(json.topDailySpendings).toEqual([]);
-  });
-
-  it("topDailySpendings returns entries sorted by spending DESC", async () => {
-    await seedAuthSession();
-    await seedSummary({ month: 2, year: 2026 });
-
-    const seat1 = await seedSeat({ githubUsername: "low-spender", firstName: "Low", lastName: "Spender" });
-    const seat2 = await seedSeat({ githubUsername: "mid-spender", firstName: "Mid", lastName: "Spender" });
-    const seat3 = await seedSeat({ githubUsername: "high-spender", firstName: "High", lastName: "Spender" });
+    const seat1 = await seedSeat({ githubUsername: "user-a" });
+    const seat2 = await seedSeat({ githubUsername: "user-b" });
 
     await seedUsage({
-      seatId: seat1.id, day: 1, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 10, grossAmount: 5, netAmount: 5, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 10 }],
-    });
-    await seedUsage({
-      seatId: seat2.id, day: 2, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 20, grossAmount: 15, netAmount: 15, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 20 }],
-    });
-    await seedUsage({
-      seatId: seat3.id, day: 3, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 30, grossAmount: 30, netAmount: 30, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 30 }],
-    });
-
-    const request = makeGetRequest({ month: "2", year: "2026" });
-    const response = await GET(request as never);
-    const json = await response.json();
-
-    expect(json.topDailySpendings).toHaveLength(3);
-    expect(json.topDailySpendings[0].totalSpending).toBe(30);
-    expect(json.topDailySpendings[1].totalSpending).toBe(15);
-    expect(json.topDailySpendings[2].totalSpending).toBe(5);
-  });
-
-  it("topDailySpendings limits to 10 entries", async () => {
-    await seedAuthSession();
-    await seedSummary({ month: 2, year: 2026 });
-
-    // Create 12 seats with usage on different days
-    for (let i = 1; i <= 12; i++) {
-      const seat = await seedSeat({ githubUsername: `user-${i}` });
-      await seedUsage({
-        seatId: seat.id, day: i, month: 2, year: 2026,
-        usageItems: [{ grossQuantity: 10, grossAmount: i, netAmount: i, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 10 }],
-      });
-    }
-
-    const request = makeGetRequest({ month: "2", year: "2026" });
-    const response = await GET(request as never);
-    const json = await response.json();
-
-    expect(json.topDailySpendings).toHaveLength(10);
-  });
-
-  it("topDailySpendings sums netAmount across multiple usage items for same seat-day", async () => {
-    await seedAuthSession();
-    await seedSummary({ month: 2, year: 2026 });
-
-    const seat = await seedSeat({ githubUsername: "multi-item-user", firstName: "Multi", lastName: "Item" });
-    await seedUsage({
-      seatId: seat.id, day: 5, month: 2, year: 2026,
+      seatId: seat1.id,
+      day: 5,
+      month: 2,
+      year: 2026,
       usageItems: [
-        { grossQuantity: 10, grossAmount: 10, netAmount: 10, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 10 },
-        { grossQuantity: 5, grossAmount: 5, netAmount: 5, model: "Claude Sonnet 4.5", product: "chat", sku: "sku2", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 5 },
+        { grossQuantity: 100, grossAmount: 10, netAmount: 8, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 100 },
+      ],
+    });
+    await seedUsage({
+      seatId: seat2.id,
+      day: 5,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        { grossQuantity: 50, grossAmount: 5, netAmount: 4, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 50 },
       ],
     });
 
@@ -580,86 +737,52 @@ describe("GET /api/dashboard", () => {
     const response = await GET(request as never);
     const json = await response.json();
 
-    expect(json.topDailySpendings).toHaveLength(1);
-    expect(json.topDailySpendings[0].totalSpending).toBe(15);
+    expect(json.dailyUsage).toHaveLength(1);
+    expect(json.dailyUsage[0].day).toBe(5);
+    expect(json.dailyUsage[0].totalRequests).toBe(150);
   });
 
-  it("topDailySpendings includes user display info from copilot_seat", async () => {
+  it("dailyUsage returns separate entries per day ordered by day ASC", async () => {
     await seedAuthSession();
     await seedSummary({ month: 2, year: 2026 });
 
-    const seat = await seedSeat({ githubUsername: "jdoe", firstName: "John", lastName: "Doe" });
+    const seat = await seedSeat({ githubUsername: "user-c" });
+
     await seedUsage({
-      seatId: seat.id, day: 7, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 10, grossAmount: 20, netAmount: 20, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 10 }],
+      seatId: seat.id,
+      day: 10,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        { grossQuantity: 30, grossAmount: 3, netAmount: 2, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 30 },
+      ],
+    });
+    await seedUsage({
+      seatId: seat.id,
+      day: 3,
+      month: 2,
+      year: 2026,
+      usageItems: [
+        { grossQuantity: 20, grossAmount: 2, netAmount: 1, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 20 },
+      ],
     });
 
     const request = makeGetRequest({ month: "2", year: "2026" });
     const response = await GET(request as never);
     const json = await response.json();
 
-    expect(json.topDailySpendings).toHaveLength(1);
-    const entry = json.topDailySpendings[0];
-    expect(entry.seatId).toBe(seat.id);
-    expect(entry.githubUsername).toBe("jdoe");
-    expect(entry.displayName).toBe("John Doe");
-    expect(entry.day).toBe(7);
-    expect(entry.totalSpending).toBe(20);
+    expect(json.dailyUsage).toHaveLength(2);
+    expect(json.dailyUsage[0]).toEqual({ day: 3, totalRequests: 20 });
+    expect(json.dailyUsage[1]).toEqual({ day: 10, totalRequests: 30 });
   });
 
-  it("topDailySpendings is empty array in empty-state response (no summary)", async () => {
+  it("dailyUsage is empty array in empty-state response (no summary)", async () => {
     await seedAuthSession();
 
     const request = makeGetRequest({ month: "6", year: "2025" });
     const response = await GET(request as never);
     const json = await response.json();
 
-    expect(json.topDailySpendings).toEqual([]);
-  });
-
-  it("topDailySpendings allows same user on multiple days", async () => {
-    await seedAuthSession();
-    await seedSummary({ month: 2, year: 2026 });
-
-    const seat = await seedSeat({ githubUsername: "multi-day-user", firstName: "Multi", lastName: "Day" });
-    await seedUsage({
-      seatId: seat.id, day: 1, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 10, grossAmount: 10, netAmount: 10, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 10 }],
-    });
-    await seedUsage({
-      seatId: seat.id, day: 2, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 20, grossAmount: 25, netAmount: 25, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 20 }],
-    });
-
-    const request = makeGetRequest({ month: "2", year: "2026" });
-    const response = await GET(request as never);
-    const json = await response.json();
-
-    expect(json.topDailySpendings).toHaveLength(2);
-    // Both entries should be for the same seat
-    expect(json.topDailySpendings[0].seatId).toBe(seat.id);
-    expect(json.topDailySpendings[1].seatId).toBe(seat.id);
-    // Sorted by spending DESC
-    expect(json.topDailySpendings[0].totalSpending).toBe(25);
-    expect(json.topDailySpendings[1].totalSpending).toBe(10);
-  });
-
-  it("topDailySpendings uses githubUsername as fallback when no name", async () => {
-    await seedAuthSession();
-    await seedSummary({ month: 2, year: 2026 });
-
-    const seat = await seedSeat({ githubUsername: "no-name-user" });
-    await seedUsage({
-      seatId: seat.id, day: 3, month: 2, year: 2026,
-      usageItems: [{ grossQuantity: 10, grossAmount: 8, netAmount: 8, model: "GPT-4o", product: "chat", sku: "sku1", unitType: "request", pricePerUnit: 0.1, discountQuantity: 0, discountAmount: 0, netQuantity: 10 }],
-    });
-
-    const request = makeGetRequest({ month: "2", year: "2026" });
-    const response = await GET(request as never);
-    const json = await response.json();
-
-    expect(json.topDailySpendings).toHaveLength(1);
-    expect(json.topDailySpendings[0].displayName).toBe("no-name-user");
-    expect(json.topDailySpendings[0].githubUsername).toBe("no-name-user");
+    expect(json.dailyUsage).toEqual([]);
   });
 });

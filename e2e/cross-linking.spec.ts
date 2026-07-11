@@ -128,8 +128,8 @@ async function seedDashboardSummary(
 ): Promise<void> {
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, 10, 8, 500, 300, 1000, 800, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, 10, 8, 500, 300, 1000, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO NOTHING`,
     [month, year],
   );

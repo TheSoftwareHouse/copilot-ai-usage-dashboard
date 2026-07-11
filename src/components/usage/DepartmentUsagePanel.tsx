@@ -6,6 +6,7 @@ import { useAsyncFetch } from "@/lib/hooks/useAsyncFetch";
 import DepartmentUsageChart from "@/components/usage/DepartmentUsageChart";
 import DepartmentUsageTable from "@/components/usage/DepartmentUsageTable";
 import DepartmentUsageStatsCards from "@/components/usage/DepartmentUsageStatsCards";
+import { isAicReportingMonth } from "@/lib/aic-reporting";
 
 export interface DepartmentUsageEntry {
   departmentId: number;
@@ -39,6 +40,7 @@ export default function DepartmentUsagePanel({
   month,
   year,
 }: DepartmentUsagePanelProps) {
+  const isAicMode = isAicReportingMonth(month, year);
   const router = useRouter();
   const [searchInput, setSearchInput] = useState(() => readSearchFromUrl());
   const [search, setSearch] = useState(() => readSearchFromUrl());
@@ -96,7 +98,7 @@ export default function DepartmentUsagePanel({
   if (loading) {
     return (
       <div className="space-y-4">
-        <DepartmentUsageStatsCards month={month} year={year} />
+        {!isAicMode && <DepartmentUsageStatsCards month={month} year={year} />}
         {searchBox}
         <div className="flex items-center justify-center py-12" role="status">
           <p className="text-sm text-gray-500">
@@ -110,7 +112,7 @@ export default function DepartmentUsagePanel({
   if (error) {
     return (
       <div className="space-y-4">
-        <DepartmentUsageStatsCards month={month} year={year} />
+        {!isAicMode && <DepartmentUsageStatsCards month={month} year={year} />}
         {searchBox}
         <div
           className="rounded-lg border border-red-200 bg-red-50 p-6"
@@ -125,7 +127,7 @@ export default function DepartmentUsagePanel({
   if (!data || data.total === 0) {
     return (
       <div className="space-y-4">
-        <DepartmentUsageStatsCards month={month} year={year} />
+        {!isAicMode && <DepartmentUsageStatsCards month={month} year={year} />}
         {searchBox}
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
@@ -140,7 +142,7 @@ export default function DepartmentUsagePanel({
   if (filteredDepartments && filteredDepartments.length === 0) {
     return (
       <div className="space-y-4">
-        <DepartmentUsageStatsCards month={month} year={year} />
+        {!isAicMode && <DepartmentUsageStatsCards month={month} year={year} />}
         {searchBox}
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
@@ -155,16 +157,18 @@ export default function DepartmentUsagePanel({
 
   return (
     <div className="space-y-4">
-      <DepartmentUsageStatsCards month={month} year={year} />
+      {!isAicMode && <DepartmentUsageStatsCards month={month} year={year} />}
       {searchBox}
-      <DepartmentUsageChart
-        departments={departments}
-        onBarClick={(departmentId) =>
-          router.push(
-            `/usage/departments/${departmentId}?month=${month}&year=${year}`,
-          )
-        }
-      />
+      {!isAicMode && (
+        <DepartmentUsageChart
+          departments={departments}
+          onBarClick={(departmentId) =>
+            router.push(
+              `/usage/departments/${departmentId}?month=${month}&year=${year}`,
+            )
+          }
+        />
+      )}
       <DepartmentUsageTable
         departments={departments}
         month={month}

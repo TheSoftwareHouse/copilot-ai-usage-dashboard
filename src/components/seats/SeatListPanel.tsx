@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { calcUsagePercent } from "@/lib/usage-helpers";
-import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
+import DeviationIcon from "@/components/shared/DeviationIcon";
 import EditableTextCell from "@/components/shared/EditableTextCell";
 import EditableDepartmentCell from "@/components/seats/EditableDepartmentCell";
 import { formatRelativeTime, formatTimestamp } from "@/lib/format-helpers";
@@ -18,7 +17,10 @@ interface SeatRecord {
   departmentId: number | null;
   lastActivityAt: string | null;
   createdAt: string;
-  totalPremiumRequests?: number;
+  totalAiCredits?: number;
+  deviationLevel?: "none" | "warning" | "alert";
+  peakMultiplier?: number | null;
+  peakDay?: number | null;
 }
 
 interface SeatsResponse {
@@ -27,7 +29,6 @@ interface SeatsResponse {
   page: number;
   pageSize: number;
   totalPages: number;
-  premiumRequestsPerSeat?: number;
 }
 
 interface DepartmentOption {
@@ -354,22 +355,27 @@ export default function SeatListPanel() {
                   </button>
                 </th>
               ))}
-              <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">                Usage %
+              <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                AIC Units
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {data.seats.map((seat) => {
               const isActive = seat.status !== "inactive";
-              const usagePercent = isActive
-                ? calcUsagePercent(seat.totalPremiumRequests ?? 0, data.premiumRequestsPerSeat ?? 300)
-                : null;
+              const showDeviation =
+                isActive &&
+                seat.deviationLevel !== undefined &&
+                seat.deviationLevel !== "none";
               return (
               <tr key={seat.id}>
                     <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
-                      {isActive && usagePercent !== null ? (
+                      {showDeviation ? (
                         <span className="inline-flex items-center gap-2">
-                          <UsageStatusIndicator percent={usagePercent} />
+                          <DeviationIcon
+                            level={seat.deviationLevel as "warning" | "alert"}
+                            tooltipText={`${seat.deviationLevel === "alert" ? "Alert" : "Warning"}: ${Math.round(seat.peakMultiplier ?? 0).toLocaleString()} AIC Units on Day ${seat.peakDay}`}
+                          />
                           <Link
                             href={`/usage/seats/${seat.id}`}
                             className="text-blue-600 hover:text-blue-800 hover:underline"
@@ -421,11 +427,9 @@ export default function SeatListPanel() {
                         : "Never"}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-gray-700">
-                      {isActive && usagePercent !== null ? (
-                        `${Math.round(usagePercent)}%`
-                      ) : (
-                        "N/A"
-                      )}
+                      {seat.totalAiCredits != null
+                        ? seat.totalAiCredits.toLocaleString()
+                        : "N/A"}
                     </td>
               </tr>
             );

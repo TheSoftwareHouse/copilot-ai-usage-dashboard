@@ -6,6 +6,7 @@ import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
 import { formatCurrency } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
 import type { TeamUsageEntry } from "@/components/usage/TeamUsagePanel";
+import { isAicReportingMonth } from "@/lib/aic-reporting";
 
 type SortField =
   | "teamName"
@@ -13,6 +14,7 @@ type SortField =
   | "totalRequests"
   | "averageRequestsPerMember"
   | "totalGrossAmount"
+  | "totalCost"
   | "usagePercent";
 
 interface TeamUsageTableProps {
@@ -22,7 +24,10 @@ interface TeamUsageTableProps {
 }
 
 export default function TeamUsageTable({ teams, month, year }: TeamUsageTableProps) {
-  const [sortBy, setSortBy] = useState<SortField>("usagePercent");
+  const isAicMode = isAicReportingMonth(month, year);
+  const [sortBy, setSortBy] = useState<SortField>(() =>
+    isAicMode ? "totalRequests" : "usagePercent",
+  );
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
   function handleSortClick(field: string) {
@@ -51,10 +56,10 @@ export default function TeamUsageTable({ teams, month, year }: TeamUsageTablePro
           <tr className="border-b border-gray-200 bg-gray-50">
             <SortableTableHeader label="Team Name" field="teamName" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} />
             <SortableTableHeader label="Members" field="memberCount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
-            <SortableTableHeader label="Total Requests" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
-            <SortableTableHeader label="Avg Requests/Member" field="averageRequestsPerMember" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
-            <SortableTableHeader label="Total Spending" field="totalGrossAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
-            <SortableTableHeader label="Usage %" field="usagePercent" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            <SortableTableHeader label={isAicMode ? "Total AIC Units" : "Total Requests"} field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            {!isAicMode && <SortableTableHeader label="Avg Requests/Member" field="averageRequestsPerMember" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />}
+            <SortableTableHeader label="Total Spending" field="totalCost" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            {!isAicMode && <SortableTableHeader label="Usage %" field="usagePercent" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />}
           </tr>
         </thead>
         <tbody>
@@ -69,7 +74,7 @@ export default function TeamUsageTable({ teams, month, year }: TeamUsageTablePro
                   className="block w-full"
                 >
                   <span className="inline-flex items-center gap-2">
-                    <UsageStatusIndicator percent={team.usagePercent} />
+                    {!isAicMode && <UsageStatusIndicator percent={team.usagePercent} />}
                     {team.teamName}
                   </span>
                 </Link>
@@ -90,33 +95,37 @@ export default function TeamUsageTable({ teams, month, year }: TeamUsageTablePro
                   {team.totalRequests.toLocaleString()}
                 </Link>
               </td>
+              {!isAicMode && (
+                <td className="px-6 py-3 text-right text-gray-700">
+                  <Link
+                    href={`/usage/teams/${team.teamId}?month=${month}&year=${year}`}
+                    className="block w-full"
+                  >
+                    {team.averageRequestsPerMember.toLocaleString(undefined, {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1,
+                    })}
+                  </Link>
+                </td>
+              )}
               <td className="px-6 py-3 text-right text-gray-700">
                 <Link
                   href={`/usage/teams/${team.teamId}?month=${month}&year=${year}`}
                   className="block w-full"
                 >
-                  {team.averageRequestsPerMember.toLocaleString(undefined, {
-                    minimumFractionDigits: 1,
-                    maximumFractionDigits: 1,
-                  })}
+                  {formatCurrency(team.totalCost)}
                 </Link>
               </td>
-              <td className="px-6 py-3 text-right text-gray-700">
-                <Link
-                  href={`/usage/teams/${team.teamId}?month=${month}&year=${year}`}
-                  className="block w-full"
-                >
-                  {formatCurrency(team.totalGrossAmount)}
-                </Link>
-              </td>
-              <td className="px-6 py-3 text-right text-gray-700">
-                <Link
-                  href={`/usage/teams/${team.teamId}?month=${month}&year=${year}`}
-                  className="block w-full"
-                >
-                  {Math.round(team.usagePercent)}%
-                </Link>
-              </td>
+              {!isAicMode && (
+                <td className="px-6 py-3 text-right text-gray-700">
+                  <Link
+                    href={`/usage/teams/${team.teamId}?month=${month}&year=${year}`}
+                    className="block w-full"
+                  >
+                    {Math.round(team.usagePercent)}%
+                  </Link>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

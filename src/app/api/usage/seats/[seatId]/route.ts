@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
+import {
+  calculateAllocatedGrossAmount,
+  calculateAllocatedRequests,
+} from "@/lib/team-allocation";
 import { calculateNorm, calculateDeviation } from "@/lib/norm-calculation";
+import { calculateUsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 type RouteContext = { params: Promise<{ seatId: string }> };
 
@@ -37,7 +41,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
     const seatRepo = dataSource.getRepository(CopilotSeatEntity);
 
     const seat = await seatRepo.findOne({ where: { id: seatId } });
@@ -124,9 +127,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
     };
 
     // Team memberships for this seat in the selected month
-    const teamRows: { teamId: number; teamName: string }[] =
+    const teamRows: { teamId: number; teamName: string; allocationPercentage: number }[] =
       await dataSource.query(
-        `SELECT t.id AS "teamId", t.name AS "teamName"
+        `SELECT t.id AS "teamId", t.name AS "teamName", tms."allocationPercentage"
          FROM team_member_snapshot tms
          JOIN team t ON t.id = tms."teamId"
          WHERE tms."seatId" = $1 AND tms.month = $2 AND tms.year = $3
@@ -138,7 +141,25 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const teams = teamRows.map((row) => ({
       teamId: Number(row.teamId),
       teamName: row.teamName,
+      allocationPercentage: row.allocationPercentage,
+      allocatedRequests: calculateAllocatedRequests(
+        summary.totalRequests,
+        row.allocationPercentage,
+      ),
+      allocatedGrossAmount: calculateAllocatedGrossAmount(
+        summary.grossSpending,
+        row.allocationPercentage,
+      ),
     }));
+
+    const costStats = calculateUsageCostMetrics({
+      month,
+      year,
+      dailyGrossQuantity: dailyRows.map((row) => ({
+        day: row.day,
+        grossQuantity: Number(row.totalRequests),
+      })),
+    });
 
     return NextResponse.json({
       seat: {
@@ -153,9 +174,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
       dailyUsage,
       modelBreakdown,
       teams,
+      costStats,
       month,
       year,
-      premiumRequestsPerSeat,
       normValue,
     });
   } catch (error) {

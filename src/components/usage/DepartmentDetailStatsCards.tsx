@@ -3,10 +3,10 @@
 import { useAsyncFetch } from "@/lib/hooks/useAsyncFetch";
 
 interface DepartmentDetailStatsResponse {
-  averageUsage: number | null;
-  medianUsage: number | null;
-  minUsage: number | null;
-  maxUsage: number | null;
+  averageRequests: number | null;
+  medianRequests: number | null;
+  minRequests: number | null;
+  maxRequests: number | null;
   month: number;
   year: number;
 }
@@ -18,10 +18,10 @@ interface DepartmentDetailStatsCardsProps {
 }
 
 const STAT_CARDS = [
-  { key: "averageUsage" as const, label: "Average Usage" },
-  { key: "medianUsage" as const, label: "Median Usage" },
-  { key: "minUsage" as const, label: "Minimum Usage" },
-  { key: "maxUsage" as const, label: "Maximum Usage" },
+  { key: "averageRequests" as const, label: "Average Usage" },
+  { key: "medianRequests" as const, label: "Median Usage" },
+  { key: "minRequests" as const, label: "Minimum Usage" },
+  { key: "maxRequests" as const, label: "Maximum Usage" },
 ];
 
 export default function DepartmentDetailStatsCards({ departmentId, month, year }: DepartmentDetailStatsCardsProps) {

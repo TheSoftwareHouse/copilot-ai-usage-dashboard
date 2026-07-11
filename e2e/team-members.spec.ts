@@ -102,10 +102,13 @@ test.describe("Team Member Management", () => {
     // Click Add Members button at top of modal
     await dialog.getByRole("button", { name: /add members/i }).click();
     await expect(dialog.getByRole("heading", { name: /add members/i })).toBeVisible();
+    await expect(dialog.getByLabel(/cost allocation %/i)).toHaveValue("100");
 
     // Should see available seats with checkboxes
     await expect(dialog.getByLabel(/select alice/i)).toBeVisible();
     await expect(dialog.getByLabel(/select bob/i)).toBeVisible();
+
+    await dialog.getByLabel(/cost allocation %/i).fill("60");
 
     // Select both seats
     await dialog.getByLabel(/select alice/i).check();
@@ -122,8 +125,46 @@ test.describe("Team Member Management", () => {
     const membersTable = dialog.locator("table", {
       has: page.locator("th", { hasText: /github username/i }),
     });
-    await expect(membersTable.getByRole("cell", { name: "alice", exact: true })).toBeVisible();
-    await expect(membersTable.getByRole("cell", { name: "bob", exact: true })).toBeVisible();
+    const aliceRow = membersTable.locator("tr", { hasText: "alice" });
+    const bobRow = membersTable.locator("tr", { hasText: "bob" });
+
+    await expect(aliceRow.getByRole("cell", { name: "alice", exact: true })).toBeVisible();
+    await expect(bobRow.getByRole("cell", { name: "bob", exact: true })).toBeVisible();
+    await expect(aliceRow.getByText("60%")).toBeVisible();
+    await expect(bobRow.getByText("60%")).toBeVisible();
+  });
+
+  test("can edit a member allocation for the selected month", async ({ page }) => {
+    const teamId = await seedTeam("Engineering");
+    const seatId = await seedSeat("alice", "Alice", "Smith");
+
+    const now = new Date();
+    const month = now.getUTCMonth() + 1;
+    const year = now.getUTCFullYear();
+    const client = await getClient();
+    await client.query(
+      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year", "allocationPercentage") VALUES ($1, $2, $3, $4, 100)`,
+      [teamId, seatId, month, year]
+    );
+    await client.end();
+
+    await loginViaApi(page, "admin", "password123");
+    await page.goto("/management?tab=teams");
+
+    const row = page.locator("tr", { hasText: "Engineering" });
+    await row.getByRole("button", { name: /members/i }).click();
+
+    const membersTable = page.locator("table", {
+      has: page.locator("th", { hasText: /github username/i }),
+    });
+    const memberRow = membersTable.locator("tr", { hasText: "alice" });
+    await expect(memberRow.getByText("100%")).toBeVisible();
+
+    await memberRow.getByRole("button", { name: /edit allocation/i }).click();
+    await memberRow.getByRole("spinbutton").fill("80");
+    await memberRow.getByRole("button", { name: /^save$/i }).click();
+
+    await expect(memberRow.getByText("80%")).toBeVisible();
   });
 
   test("can remove a seat from a team", async ({ page }) => {

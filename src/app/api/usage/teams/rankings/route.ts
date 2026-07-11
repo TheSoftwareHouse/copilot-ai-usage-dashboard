@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
@@ -24,13 +23,11 @@ export async function GET(request: NextRequest) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
-
     type RankingRow = {
       teamId: number;
       teamName: string;
       memberCount: number;
-      usagePercent: string;
+      totalRequests: string;
       rank_desc: string;
       rank_asc: string;
     };
@@ -56,7 +53,7 @@ export async function GET(request: NextRequest) {
          SELECT
            mu."teamId",
            COUNT(DISTINCT mu."seatId") AS member_count,
-           COALESCE(SUM(LEAST(mu.requests, $3)), 0) AS capped_total
+           COALESCE(SUM(mu.requests), 0) AS total_requests
          FROM member_usage mu
          GROUP BY mu."teamId"
        ),
@@ -64,10 +61,7 @@ export async function GET(request: NextRequest) {
          SELECT
            ta."teamId",
            ta.member_count,
-           CASE WHEN $3 > 0
-             THEN ta.capped_total / (ta.member_count * $3) * 100
-             ELSE 0
-           END AS usage_percent
+           ta.total_requests
          FROM team_aggregates ta
          WHERE ta.member_count > 0
        ),
@@ -76,23 +70,23 @@ export async function GET(request: NextRequest) {
            tu."teamId",
            t.name AS "teamName",
            tu.member_count::int AS "memberCount",
-           ROUND(tu.usage_percent::numeric, 1) AS "usagePercent",
-           ROW_NUMBER() OVER (ORDER BY tu.usage_percent DESC, tu.member_count DESC) AS rank_desc,
-           ROW_NUMBER() OVER (ORDER BY tu.usage_percent ASC, tu.member_count ASC) AS rank_asc
+           tu.total_requests AS "totalRequests",
+           ROW_NUMBER() OVER (ORDER BY tu.total_requests DESC, tu.member_count DESC) AS rank_desc,
+           ROW_NUMBER() OVER (ORDER BY tu.total_requests ASC, tu.member_count ASC) AS rank_asc
          FROM team_usage tu
          JOIN team t ON t.id = tu."teamId"
        )
        SELECT *
        FROM ranked
        WHERE rank_desc <= 5 OR rank_asc <= 5`,
-      [month, year, premiumRequestsPerSeat],
+      [month, year],
     );
 
     const mapRow = (row: RankingRow) => ({
       teamId: row.teamId,
       teamName: row.teamName,
       memberCount: row.memberCount,
-      usagePercent: Number(row.usagePercent),
+      totalAiCredits: Number(row.totalRequests),
     });
 
     const mostActive = rows

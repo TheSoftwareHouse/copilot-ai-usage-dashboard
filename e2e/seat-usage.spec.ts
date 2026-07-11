@@ -1,6 +1,12 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { seedTestUser, loginViaApi } from "./helpers/auth";
 import { getClient } from "./helpers/db";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 async function seedConfiguration() {
   const client = await getClient();
@@ -58,8 +64,8 @@ async function seedUsage(
 async function seedDashboardSummary(month: number, year: number) {
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, 10, 8, 500, 300, 1000, 800, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, 10, 8, 500, 300, 1000, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO NOTHING`,
     [month, year],
   );
@@ -94,6 +100,58 @@ function makeUsageItem(model: string, grossQuantity: number, grossAmount: number
     netQuantity: Math.round(netAmount / 0.04),
     netAmount,
   };
+}
+
+function expectedElapsedDays(month: number, year: number, calendarDays: number): number {
+  const now = new Date();
+  const currentMonth = now.getUTCMonth() + 1;
+  const currentYear = now.getUTCFullYear();
+
+  if (year < currentYear || (year === currentYear && month < currentMonth)) {
+    return calendarDays;
+  }
+
+  if (year > currentYear || (year === currentYear && month > currentMonth)) {
+    return 0;
+  }
+
+  return Math.min(now.getUTCDate(), calendarDays);
+}
+
+function expectedCostCards(totalGrossQuantity: number, month: number, year: number) {
+  const calendarDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const elapsedDays = expectedElapsedDays(month, year, calendarDays);
+  let workingDays = 0;
+
+  for (let day = 1; day <= calendarDays; day++) {
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (weekday >= 1 && weekday <= 5) workingDays++;
+  }
+
+  const totalCost = totalGrossQuantity / 100;
+  const averageDailyCost = elapsedDays > 0 ? Math.round((totalCost / elapsedDays) * 100) / 100 : 0;
+  const predictedMonthCost = averageDailyCost * workingDays;
+
+  return {
+    averageDailyCost: `$${averageDailyCost.toFixed(2)}`,
+    totalCost: `$${totalCost.toFixed(2)}`,
+    predictedMonthCost: `$${predictedMonthCost.toFixed(2)}`,
+  };
+}
+
+async function expectCostCards(
+  page: Page,
+  values: ReturnType<typeof expectedCostCards>,
+) {
+  for (const [label, value] of [
+    ["Average Daily Cost", values.averageDailyCost],
+    ["Total Cost", values.totalCost],
+    ["Predicted Month Cost", values.predictedMonthCost],
+  ] as const) {
+    const card = page.getByRole("heading", { name: label }).locator("..");
+    await expect(card).toBeVisible();
+    await expect(card.getByText(value, { exact: true })).toBeVisible();
+  }
 }
 
 test.describe("Usage Analytics — Seat Tab", () => {
@@ -166,16 +224,15 @@ test.describe("Usage Analytics — Seat Tab", () => {
     await expect(page.getByText("Engineering")).toBeVisible();
     await expect(page.getByText("$4.00")).toBeVisible(); // gross: 3.20 + 0.80 (Total Spending)
 
-    // Verify Usage column is present with percentage
-    await expect(page.getByRole("columnheader", { name: "Usage" })).toBeVisible();
-    const aliceRow = page.locator("tr", { hasText: "alice-dev" });
-    await expect(aliceRow.getByText(/%/)).toBeVisible();
-
-    // Usage status indicator should appear next to the username
-    await expect(aliceRow.getByRole("img", { name: /usage/i })).toBeVisible();
-
-    // Verify simplified columns — Models and Net Amount are not shown
+    // Verify AIC-specific columns are present.
+    await expect(page.getByRole("columnheader", { name: "AIC Units" })).toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Total Spending" })).toBeVisible();
+
+    const aliceRow = page.locator("tr", { hasText: "alice-dev" });
+    await expect(aliceRow.getByText("100")).toBeVisible();
+    await expect(aliceRow.getByText("$4.00")).toBeVisible();
+
+    // Models and Net Amount are not shown in the AIC table.
     await expect(page.getByRole("columnheader", { name: "Models" })).not.toBeVisible();
     await expect(page.getByRole("columnheader", { name: "Net Amount" })).not.toBeVisible();
   });
@@ -214,6 +271,11 @@ test.describe("Usage Analytics — Seat Tab", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/usage");
 
+    await expectCostCards(page, {
+      averageDailyCost: "$0.00",
+      totalCost: "$0.00",
+      predictedMonthCost: "$0.00",
+    });
     await expect(
       page.getByText(/no per-seat usage data available/i),
     ).toBeVisible();
@@ -255,6 +317,9 @@ test.describe("Usage Analytics — Seat Tab", () => {
     // Current month data should be visible
     const seatTable = page.locator("table");
     await expect(seatTable.getByText("current-user")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Average Daily Cost" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Total Cost" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Predicted Month Cost" })).toBeVisible();
 
     // Switch to previous month
     const select = page.getByLabel("Month");
@@ -264,6 +329,9 @@ test.describe("Usage Analytics — Seat Tab", () => {
     // Previous month data should now be visible
     await expect(seatTable.getByText("prev-user")).toBeVisible();
     await expect(page.getByText("$2.40")).toBeVisible(); // gross amount for prev-user
+    await expect(page.getByRole("heading", { name: "Average Daily Cost" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Total Cost" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Predicted Month Cost" })).toBeVisible();
   });
 
   test("pagination controls are visible and functional when data exceeds page size", async ({
@@ -289,6 +357,7 @@ test.describe("Usage Analytics — Seat Tab", () => {
 
     // Wait for table data
     await expect(page.getByText("Page 1 of 2")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(3250, currentMonth, currentYear));
 
     // Navigate to page 2
     const nextButton = page.getByRole("button", { name: /next page/i });
@@ -296,6 +365,7 @@ test.describe("Usage Analytics — Seat Tab", () => {
     await nextButton.click();
 
     await expect(page.getByText("Page 2 of 2")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(3250, currentMonth, currentYear));
 
     // Previous button should be enabled, Next should be disabled
     const prevButton = page.getByRole("button", { name: /previous page/i });
@@ -305,6 +375,36 @@ test.describe("Usage Analytics — Seat Tab", () => {
     // Navigate back to page 1
     await prevButton.click();
     await expect(page.getByText("Page 1 of 2")).toBeVisible();
+
+    const searchInput = page.getByPlaceholder("Search seats…");
+    await searchInput.fill("paginated-user-01");
+    const seatTable = page.locator("table");
+    await expect(seatTable.getByText("paginated-user-01")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(3250, currentMonth, currentYear));
+  });
+
+  test("seat cost cards remain visible in an AIC reporting month", async ({ page }) => {
+    const aicMonth = 5;
+    const aicYear = 2026;
+
+    await seedDashboardSummary(currentMonth, currentYear);
+    await seedDashboardSummary(aicMonth, aicYear);
+    const seatId = await seedSeat({
+      githubUsername: "aic-seat-user",
+      githubUserId: 4501,
+    });
+    await seedUsage(seatId, 1, aicMonth, aicYear, [
+      makeUsageItem("GPT-4o", 500, 20),
+    ]);
+
+    await loginViaApi(page, "admin", "password123");
+    await page.goto("/usage");
+
+    const select = page.getByLabel("Month");
+    await select.selectOption(`${aicMonth}-${aicYear}`);
+
+    await expect(page.getByRole("columnheader", { name: "AIC Units" })).toBeVisible();
+    await expectCostCards(page, expectedCostCards(500, aicMonth, aicYear));
   });
 
   test("Team and Department tabs show content", async ({
@@ -525,6 +625,7 @@ test.describe("Seat Detail — Drill-Down", () => {
   const now = new Date();
   const currentMonth = now.getUTCMonth() + 1;
   const currentYear = now.getUTCFullYear();
+  const currentMonthName = MONTH_NAMES[currentMonth - 1];
 
   test.beforeEach(async () => {
     await clearAll();
@@ -574,7 +675,7 @@ test.describe("Seat Detail — Drill-Down", () => {
     await expect(seatTab).toHaveAttribute("aria-selected", "true");
   });
 
-  test("summary cards display net spending and total requests", async ({ page }) => {
+  test("summary cards display cost cards", async ({ page }) => {
     await seedDashboardSummary(currentMonth, currentYear);
 
     const seatId = await seedSeat({
@@ -596,13 +697,7 @@ test.describe("Seat Detail — Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
 
-    // Net spending: 0.80 + 0.50 + 0.70 = $2.00
-    await expect(page.getByRole("heading", { name: "Net Spending" })).toBeVisible();
-    await expect(page.getByText("$2.00")).toBeVisible();
-
-    // Total requests: 60 + 40 + 50 = 150
-    await expect(page.getByRole("heading", { name: "Total Requests" })).toBeVisible();
-    await expect(page.getByText("150")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(150, currentMonth, currentYear));
   });
 
   test("daily usage chart is visible", async ({ page }) => {
@@ -674,18 +769,14 @@ test.describe("Seat Detail — Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
 
-    // Current month: $1.20 net spending
-    await expect(page.getByRole("heading", { name: "Net Spending" })).toBeVisible();
-    // Scope to paragraph within the summary card (avoid matching table cell too)
-    await expect(page.getByRole("paragraph").filter({ hasText: "$1.20" })).toBeVisible();
+    await expectCostCards(page, expectedCostCards(100, currentMonth, currentYear));
 
     // Switch to previous month
     const select = page.getByLabel("Month");
     await expect(select).toBeVisible();
     await select.selectOption(`${prevMonth}-${prevYear}`);
 
-    // Previous month: $0.60 net spending
-    await expect(page.getByRole("paragraph").filter({ hasText: "$0.60" })).toBeVisible();
+    await expectCostCards(page, expectedCostCards(50, prevMonth, prevYear));
   });
 
   test("empty state is shown when seat has no usage data for the selected month", async ({ page }) => {
@@ -701,10 +792,10 @@ test.describe("Seat Detail — Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
 
-    await expect(page.getByText(/no usage data available/i)).toBeVisible();
+    await expect(page.getByText(/no aic csv data available/i)).toBeVisible();
   });
 
-  test("progress bar displays correct usage percentage on seat detail page", async ({ page }) => {
+  test("seat detail page shows cost cards without a progress bar", async ({ page }) => {
     await seedDashboardSummary(currentMonth, currentYear);
 
     const seatId = await seedSeat({
@@ -714,7 +805,7 @@ test.describe("Seat Detail — Drill-Down", () => {
       lastName: "User",
     });
 
-    // 150 requests / 300 allowance = 50%
+    // 150 AIC units should be shown directly
     await seedUsage(seatId, 1, currentMonth, currentYear, [
       makeUsageItem("GPT-4o", 150, 6.00, 2.00),
     ]);
@@ -722,13 +813,10 @@ test.describe("Seat Detail — Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
 
-    const progressBar = page.getByRole("progressbar");
-    await expect(progressBar).toBeVisible();
-    await expect(progressBar).toHaveAttribute("aria-valuenow", "50");
-    await expect(page.getByText("50%")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(150, currentMonth, currentYear));
   });
 
-  test("progress bar shows 0% when seat has no usage data", async ({ page }) => {
+  test("seat detail page shows zero AIC totals when seat has no usage data", async ({ page }) => {
     await seedDashboardSummary(currentMonth, currentYear);
 
     const seatId = await seedSeat({
@@ -741,13 +829,10 @@ test.describe("Seat Detail — Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
 
-    const progressBar = page.getByRole("progressbar");
-    await expect(progressBar).toBeVisible();
-    await expect(progressBar).toHaveAttribute("aria-valuenow", "0");
-    await expect(page.getByText("0%")).toBeVisible();
+    await expect(page.getByText(/no aic csv data available/i)).toBeVisible();
   });
 
-  test("progress bar shows actual percentage when seat exceeds premium allowance", async ({ page }) => {
+  test("seat detail page shows uncapped cost cards when usage exceeds the legacy baseline", async ({ page }) => {
     await seedDashboardSummary(currentMonth, currentYear);
 
     const seatId = await seedSeat({
@@ -757,7 +842,7 @@ test.describe("Seat Detail — Drill-Down", () => {
       lastName: "Cap",
     });
 
-    // 500 requests / 300 allowance = 167% uncapped
+    // 500 AIC units should be shown directly
     await seedUsage(seatId, 1, currentMonth, currentYear, [
       makeUsageItem("GPT-4o", 500, 20.00, 5.00),
     ]);
@@ -765,10 +850,85 @@ test.describe("Seat Detail — Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
 
-    const progressBar = page.getByRole("progressbar");
-    await expect(progressBar).toBeVisible();
-    // Shows actual uncapped percentage
-    await expect(progressBar).toHaveAttribute("aria-valuenow", "167");
-    await expect(page.getByText("167%")).toBeVisible();
+    await expectCostCards(page, expectedCostCards(500, currentMonth, currentYear));
+  });
+
+  test("model name link navigates to seat model daily detail preserving scope", async ({ page }) => {
+    await seedDashboardSummary(currentMonth, currentYear);
+
+    const seatId = await seedSeat({
+      githubUsername: "model-link-user",
+      githubUserId: 5013,
+      firstName: "Model",
+      lastName: "Link",
+    });
+
+    const selectedModel = "Model Alpha / 50%";
+    await seedUsage(seatId, 10, currentMonth, currentYear, [
+      makeUsageItem(selectedModel, 42, 1.68, 0.4),
+      makeUsageItem("Other Model", 100, 4.0, 1.0),
+    ]);
+
+    await loginViaApi(page, "admin", "password123");
+    await page.goto(`/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`);
+
+    await expect(page.getByRole("heading", { name: "Model Breakdown" })).toBeVisible();
+
+    const selectedModelLink = page.getByRole("link", { name: selectedModel });
+    await expect(selectedModelLink).toBeVisible();
+    await selectedModelLink.click();
+
+    await expect(page).toHaveURL(
+      `/usage/seats/${seatId}/models/${encodeURIComponent(selectedModel)}?month=${currentMonth}&year=${currentYear}`,
+    );
+
+    await expect(
+      page.getByRole("heading", {
+        name: `Daily AIC Units for ${selectedModel} by model-link-user (${currentMonthName} ${currentYear})`,
+      }),
+    ).toBeVisible();
+
+    await expect(
+      page.getByRole("img", {
+        name: /daily usage bar chart showing aic units per day/i,
+      }),
+    ).toBeVisible();
+
+    const backLink = page.getByRole("link", { name: /back to model-link-user/i });
+    await expect(backLink).toBeVisible();
+    await backLink.click();
+
+    await expect(page).toHaveURL(
+      `/usage/seats/${seatId}?month=${currentMonth}&year=${currentYear}`,
+    );
+  });
+
+  test("seat model daily detail excludes other model usage on the same date", async ({ page }) => {
+    await seedDashboardSummary(currentMonth, currentYear);
+
+    const seatId = await seedSeat({
+      githubUsername: "model-filter-user",
+      githubUserId: 5014,
+      firstName: "Model",
+      lastName: "Filter",
+    });
+
+    await seedUsage(seatId, 12, currentMonth, currentYear, [
+      makeUsageItem("Claude Sonnet 4.5", 77, 3.08, 1.0),
+    ]);
+
+    await loginViaApi(page, "admin", "password123");
+    await page.goto(
+      `/usage/seats/${seatId}/models/${encodeURIComponent("GPT-4o")}?month=${currentMonth}&year=${currentYear}`,
+    );
+
+    await expect(
+      page.getByRole("heading", {
+        name: `Daily AIC Units for GPT-4o by model-filter-user (${currentMonthName} ${currentYear})`,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("No AIC CSV data for this model and time period."),
+    ).toBeVisible();
   });
 });

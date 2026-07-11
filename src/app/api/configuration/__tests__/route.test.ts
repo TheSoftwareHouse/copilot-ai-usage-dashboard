@@ -124,7 +124,7 @@ describe("GET /api/configuration", () => {
     expect(json.updatedAt).toBeDefined();
   });
 
-  it("returns premiumRequestsPerSeat with default value (300)", async () => {
+  it("does not return a legacy allowance field", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -138,10 +138,10 @@ describe("GET /api/configuration", () => {
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json.legacyAllowance).toBeUndefined();
   });
 
-  it("returns norm fields with default values", async () => {
+  it("returns static threshold fields with default values", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -155,9 +155,9 @@ describe("GET /api/configuration", () => {
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.normSeatsCount).toBe(30);
-    expect(json.deviationWarningThreshold).toBe(1.5);
-    expect(json.deviationAlertThreshold).toBe(2.0);
+    expect(json.normSeatsCount).toBeUndefined();
+    expect(json.deviationWarningThreshold).toBe(500);
+    expect(json.deviationAlertThreshold).toBe(1000);
   });
 
   it("returns norm threshold fields as numbers, not strings", async () => {
@@ -287,31 +287,18 @@ describe("POST /api/configuration", () => {
     expect(saved!.entityName).toBe("AcmeCorp");
   });
 
-  it("creates configuration with custom premiumRequestsPerSeat", async () => {
+  it("rejects the retired allowance field during create", async () => {
     const request = makeRequest("POST", {
       apiMode: "organisation",
       entityName: "TestOrg",
-      premiumRequestsPerSeat: 500,
+      legacyAllowance: 500,
     });
 
     const response = await POST(request);
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(400);
 
     const json = await response.json();
-    expect(json.premiumRequestsPerSeat).toBe(500);
-  });
-
-  it("creates configuration with default premiumRequestsPerSeat when not provided", async () => {
-    const request = makeRequest("POST", {
-      apiMode: "organisation",
-      entityName: "TestOrg",
-    });
-
-    const response = await POST(request);
-    expect(response.status).toBe(201);
-
-    const json = await response.json();
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json.error).toBe("Validation failed");
   });
 });
 
@@ -333,7 +320,7 @@ describe("PUT /api/configuration", () => {
   it("returns 401 when no session is provided", async () => {
     mockCookieStore = {};
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 350,
     });
     const response = await PUT(request);
     expect(response.status).toBe(401);
@@ -347,7 +334,7 @@ describe("PUT /api/configuration", () => {
     mockCookieStore = {};
     await seedAuthSession({ role: UserRole.USER });
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 350,
     });
     const response = await PUT(request);
     expect(response.status).toBe(403);
@@ -364,18 +351,17 @@ describe("PUT /api/configuration", () => {
     await repo.save({
       apiMode: ApiMode.ORGANISATION,
       entityName: "OriginalOrg",
-      premiumRequestsPerSeat: 300,
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 350,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.premiumRequestsPerSeat).toBe(500);
+    expect(json.deviationWarningThreshold).toBe(350);
     expect(json.apiMode).toBe("organisation");
     expect(json.entityName).toBe("OriginalOrg");
     expect(json.createdAt).toBeDefined();
@@ -397,7 +383,7 @@ describe("PUT /api/configuration", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 350,
     });
 
     const response = await PUT(request);
@@ -411,7 +397,7 @@ describe("PUT /api/configuration", () => {
 
   it("returns 404 when no configuration exists", async () => {
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 350,
     });
 
     const response = await PUT(request);
@@ -443,23 +429,22 @@ describe("PUT /api/configuration", () => {
     await repo.save({
       apiMode: ApiMode.ORGANISATION,
       entityName: "OriginalOrg",
-      premiumRequestsPerSeat: 300,
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 350,
     });
 
     await PUT(request);
 
     const saved = await repo.findOne({ where: {} });
     expect(saved).not.toBeNull();
-    expect(saved!.premiumRequestsPerSeat).toBe(500);
+    expect(Number(saved!.deviationWarningThreshold)).toBe(350);
     expect(saved!.apiMode).toBe("organisation");
     expect(saved!.entityName).toBe("OriginalOrg");
   });
 
-  it("updates premiumRequestsPerSeat", async () => {
+  it("updates deviationWarningThreshold", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -467,21 +452,20 @@ describe("PUT /api/configuration", () => {
     await repo.save({
       apiMode: ApiMode.ORGANISATION,
       entityName: "TestOrg",
-      premiumRequestsPerSeat: 300,
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 500,
+      deviationWarningThreshold: 175,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.premiumRequestsPerSeat).toBe(500);
+    expect(json.deviationWarningThreshold).toBe(175);
   });
 
-  it("returns 400 for invalid premiumRequestsPerSeat (negative)", async () => {
+  it("returns 400 for invalid deviationWarningThreshold (zero)", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -492,54 +476,14 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: -1,
-    });
-
-    const response = await PUT(request);
-    expect(response.status).toBe(400);
-
-    const json = await response.json();
-    expect(json.error).toBe("Validation failed");
-    expect(json.details.premiumRequestsPerSeat).toBeDefined();
-  });
-
-  it("returns 400 for invalid premiumRequestsPerSeat (zero)", async () => {
-    const { ConfigurationEntity } = await import(
-      "@/entities/configuration.entity"
-    );
-    const repo = testDs.getRepository(ConfigurationEntity);
-    await repo.save({
-      apiMode: ApiMode.ORGANISATION,
-      entityName: "TestOrg",
-    });
-
-    const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 0,
+      deviationWarningThreshold: 0,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(400);
   });
 
-  it("returns 400 for non-integer premiumRequestsPerSeat", async () => {
-    const { ConfigurationEntity } = await import(
-      "@/entities/configuration.entity"
-    );
-    const repo = testDs.getRepository(ConfigurationEntity);
-    await repo.save({
-      apiMode: ApiMode.ORGANISATION,
-      entityName: "TestOrg",
-    });
-
-    const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 1.5,
-    });
-
-    const response = await PUT(request);
-    expect(response.status).toBe(400);
-  });
-
-  it("returns 400 when premiumRequestsPerSeat is missing", async () => {
+  it("returns 400 when no update fields are provided", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -555,7 +499,7 @@ describe("PUT /api/configuration", () => {
     expect(response.status).toBe(400);
   });
 
-  it("returns 400 for non-numeric premiumRequestsPerSeat", async () => {
+  it("returns 400 for non-numeric deviationWarningThreshold", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -566,33 +510,11 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: "abc",
+      deviationWarningThreshold: "abc",
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(400);
-  });
-
-  it("updates normSeatsCount successfully", async () => {
-    const { ConfigurationEntity } = await import(
-      "@/entities/configuration.entity"
-    );
-    const repo = testDs.getRepository(ConfigurationEntity);
-    await repo.save({
-      apiMode: ApiMode.ORGANISATION,
-      entityName: "TestOrg",
-    });
-
-    const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      normSeatsCount: 50,
-    });
-
-    const response = await PUT(request);
-    expect(response.status).toBe(200);
-
-    const json = await response.json();
-    expect(json.normSeatsCount).toBe(50);
   });
 
   it("updates deviationWarningThreshold successfully", async () => {
@@ -606,15 +528,14 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      deviationWarningThreshold: 1.75,
+      deviationWarningThreshold: 175,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.deviationWarningThreshold).toBe(1.75);
+    expect(json.deviationWarningThreshold).toBe(175);
   });
 
   it("updates deviationAlertThreshold successfully", async () => {
@@ -628,18 +549,17 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      deviationAlertThreshold: 3.0,
+      deviationAlertThreshold: 1300,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.deviationAlertThreshold).toBe(3.0);
+    expect(json.deviationAlertThreshold).toBe(1300);
   });
 
-  it("updates all three norm fields in a single request", async () => {
+  it("updates both static threshold fields in a single request", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -650,22 +570,20 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      normSeatsCount: 100,
-      deviationWarningThreshold: 1.25,
-      deviationAlertThreshold: 3.5,
+      deviationWarningThreshold: 125,
+      deviationAlertThreshold: 350,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.normSeatsCount).toBe(100);
-    expect(json.deviationWarningThreshold).toBe(1.25);
-    expect(json.deviationAlertThreshold).toBe(3.5);
+    expect(json.normSeatsCount).toBeUndefined();
+    expect(json.deviationWarningThreshold).toBe(125);
+    expect(json.deviationAlertThreshold).toBe(350);
   });
 
-  it("returns 400 for normSeatsCount of 0", async () => {
+  it("returns 400 for deviationWarningThreshold of 0", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -676,30 +594,7 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      normSeatsCount: 0,
-    });
-
-    const response = await PUT(request);
-    expect(response.status).toBe(400);
-
-    const json = await response.json();
-    expect(json.error).toBe("Validation failed");
-  });
-
-  it("returns 400 for deviationWarningThreshold of 1.0", async () => {
-    const { ConfigurationEntity } = await import(
-      "@/entities/configuration.entity"
-    );
-    const repo = testDs.getRepository(ConfigurationEntity);
-    await repo.save({
-      apiMode: ApiMode.ORGANISATION,
-      entityName: "TestOrg",
-    });
-
-    const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      deviationWarningThreshold: 1.0,
+      deviationWarningThreshold: 0,
     });
 
     const response = await PUT(request);
@@ -720,7 +615,6 @@ describe("PUT /api/configuration", () => {
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
       deviationWarningThreshold: 3.0,
       deviationAlertThreshold: 2.0,
     });
@@ -739,16 +633,15 @@ describe("PUT /api/configuration", () => {
       "@/entities/configuration.entity"
     );
     const repo = testDs.getRepository(ConfigurationEntity);
-    // Default alert threshold is 2.0
+    // Default alert threshold is 1000
     await repo.save({
       apiMode: ApiMode.ORGANISATION,
       entityName: "TestOrg",
     });
 
-    // Send only warning threshold that exceeds existing alert threshold (2.0)
+    // Send only warning threshold that exceeds existing alert threshold (1000)
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      deviationWarningThreshold: 2.5,
+      deviationWarningThreshold: 1500,
     });
 
     const response = await PUT(request);
@@ -760,7 +653,7 @@ describe("PUT /api/configuration", () => {
     );
   });
 
-  it("partial update of normSeatsCount does not reset threshold fields", async () => {
+  it("partial update of warning threshold does not reset alert threshold", async () => {
     const { ConfigurationEntity } = await import(
       "@/entities/configuration.entity"
     );
@@ -768,21 +661,20 @@ describe("PUT /api/configuration", () => {
     await repo.save({
       apiMode: ApiMode.ORGANISATION,
       entityName: "TestOrg",
-      deviationWarningThreshold: 1.75,
-      deviationAlertThreshold: 3.0,
+      deviationWarningThreshold: 175,
+      deviationAlertThreshold: 300,
     });
 
     const request = makeRequest("PUT", {
-      premiumRequestsPerSeat: 300,
-      normSeatsCount: 50,
+      deviationWarningThreshold: 250,
     });
 
     const response = await PUT(request);
     expect(response.status).toBe(200);
 
     const json = await response.json();
-    expect(json.normSeatsCount).toBe(50);
-    expect(json.deviationWarningThreshold).toBe(1.75);
-    expect(json.deviationAlertThreshold).toBe(3.0);
+    expect(json.normSeatsCount).toBeUndefined();
+    expect(json.deviationWarningThreshold).toBe(250);
+    expect(json.deviationAlertThreshold).toBe(300);
   });
 });

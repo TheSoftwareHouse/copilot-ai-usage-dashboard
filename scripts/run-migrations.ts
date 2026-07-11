@@ -26,6 +26,15 @@ import { AddTelemetryApiKey1773300000000 } from "../migrations/1773300000000-Add
 import { CreateTelemetryEvent1773400000000 } from "../migrations/1773400000000-CreateTelemetryEvent";
 import { AddTelemetryGithubUsername1773500000000 } from "../migrations/1773500000000-AddTelemetryGithubUsername";
 import { AddNormConfiguration1773600000000 } from "../migrations/1773600000000-AddNormConfiguration";
+import { CreateImportHistory1773650000000 } from "../migrations/1773650000000-CreateImportHistory";
+import { ExpandDeviationThresholdPrecision1773700000000 } from "../migrations/1773700000000-ExpandDeviationThresholdPrecision";
+import { ExpandDeviationThresholdPrecisionTo500001773800000000 } from "../migrations/1773800000000-ExpandDeviationThresholdPrecisionTo50000";
+import { SetStaticAicThresholdDefaults1773900000000 } from "../migrations/1773900000000-SetStaticAicThresholdDefaults";
+import { AddTeamMemberAllocationPercentage1774000000000 } from "../migrations/1774000000000-AddTeamMemberAllocationPercentage";
+import { AddCopilotUsageSource1774100000000 } from "../migrations/1774100000000-AddCopilotUsageSource";
+import { AddUsageCollectionJobExecutionStates1774200000000 } from "../migrations/1774200000000-AddUsageCollectionJobExecutionStates";
+import { RenameAiCreditsAndArchivePremiumAllowance1774300000000 } from "../migrations/1774300000000-RenameAiCreditsAndArchivePremiumAllowance";
+import { RemoveTelemetry1774400000000 } from "../migrations/1774400000000-RemoveTelemetry";
 
 const MAX_RETRIES = 5;
 const RETRY_INTERVAL_MS = 3000;
@@ -77,6 +86,15 @@ async function runMigrations(): Promise<void> {
       CreateTelemetryEvent1773400000000,
       AddTelemetryGithubUsername1773500000000,
       AddNormConfiguration1773600000000,
+      CreateImportHistory1773650000000,
+      ExpandDeviationThresholdPrecision1773700000000,
+      ExpandDeviationThresholdPrecisionTo500001773800000000,
+      SetStaticAicThresholdDefaults1773900000000,
+      AddTeamMemberAllocationPercentage1774000000000,
+      AddCopilotUsageSource1774100000000,
+      AddUsageCollectionJobExecutionStates1774200000000,
+      RenameAiCreditsAndArchivePremiumAllowance1774300000000,
+      RemoveTelemetry1774400000000,
     ],
     synchronize: false,
     logging: false,

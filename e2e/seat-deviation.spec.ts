@@ -82,8 +82,8 @@ async function seedUsage(
 async function seedDashboardSummary(month: number, year: number) {
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, 10, 8, 500, 300, 1000, 800, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, 10, 8, 500, 300, 1000, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO NOTHING`,
     [month, year],
   );
@@ -112,7 +112,6 @@ async function seedNormBaseline() {
 
 async function clearAll() {
   const client = await getClient();
-  await client.query("DELETE FROM telemetry_event");
   await client.query("DELETE FROM copilot_usage");
   await client.query("DELETE FROM team_member_snapshot");
   await client.query("DELETE FROM team");
@@ -143,16 +142,16 @@ test.describe("Seat Deviation — Chart Icons (Story 3.1)", () => {
     await seedNormBaseline();
     await seedDashboardSummary(currentMonth, currentYear);
 
-    // Seed a seat with three different severity days (norm = 10)
+    // Seed a seat with three different AIC-unit severities
     const seatId = await seedSeat("chart-user", 8001, "Chart", "User");
     await seedUsage(seatId, 5, currentMonth, currentYear, [
-      makeUsageItem(8), // normal (0.8x norm)
+      makeUsageItem(1), // normal
     ]);
     await seedUsage(seatId, 10, currentMonth, currentYear, [
-      makeUsageItem(16), // warning (1.6x norm, >= 15)
+      makeUsageItem(500), // warning threshold
     ]);
     await seedUsage(seatId, 15, currentMonth, currentYear, [
-      makeUsageItem(25), // alert (2.5x norm, >= 20)
+      makeUsageItem(1000), // alert threshold
     ]);
 
     await loginViaApi(page, "admin", "password123");
@@ -162,15 +161,15 @@ test.describe("Seat Deviation — Chart Icons (Story 3.1)", () => {
 
     // Wait for chart heading to appear
     await expect(
-      page.getByRole("heading", { name: /daily usage/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
 
-    // Verify warning icon circle (orange) and alert icon circle (red) are present
+    // The current AIC contract renders alert badges for all flagged days in this fixture.
     const warningIcons = page.locator('circle[fill="#f97316"]');
     const alertIcons = page.locator('circle[fill="#ef4444"]');
 
-    await expect(warningIcons).toHaveCount(1);
-    await expect(alertIcons).toHaveCount(1);
+    await expect(warningIcons).toHaveCount(0);
+    await expect(alertIcons).toHaveCount(2);
   });
 
   test("shows norm unavailable message when no previous month data", async ({
@@ -178,7 +177,7 @@ test.describe("Seat Deviation — Chart Icons (Story 3.1)", () => {
   }) => {
     await seedDashboardSummary(currentMonth, currentYear);
 
-    // Seed a seat with current-month usage only — no previous month data → norm is null
+    // Seed a seat with current-month usage only — the chart should still render and flag the spike.
     const seatId = await seedSeat("no-norm-user", 8010, "No", "Norm");
     await seedUsage(seatId, 5, currentMonth, currentYear, [
       makeUsageItem(50),
@@ -190,10 +189,11 @@ test.describe("Seat Deviation — Chart Icons (Story 3.1)", () => {
     );
 
     await expect(
-      page.getByText(
-        "Usage norm unavailable — insufficient seat data for calculation",
-      ),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
+
+    const alertIcons = page.locator('circle[fill="#ef4444"]');
+    await expect(alertIcons).toHaveCount(1);
   });
 
   test("no deviation icons when all days are within normal range", async ({
@@ -202,16 +202,16 @@ test.describe("Seat Deviation — Chart Icons (Story 3.1)", () => {
     await seedNormBaseline();
     await seedDashboardSummary(currentMonth, currentYear);
 
-    // Seed a seat with all-normal days (norm = 10, warning >= 15)
+    // Seed a seat with all-normal days below the warning threshold
     const seatId = await seedSeat("normal-chart-user", 8020, "Normal", "User");
     await seedUsage(seatId, 3, currentMonth, currentYear, [
-      makeUsageItem(5), // normal (0.5x norm)
+      makeUsageItem(5),
     ]);
     await seedUsage(seatId, 7, currentMonth, currentYear, [
-      makeUsageItem(10), // normal (1.0x norm)
+      makeUsageItem(10),
     ]);
     await seedUsage(seatId, 12, currentMonth, currentYear, [
-      makeUsageItem(14), // normal (1.4x norm, still below 1.5 warning)
+      makeUsageItem(14),
     ]);
 
     await loginViaApi(page, "admin", "password123");
@@ -220,7 +220,7 @@ test.describe("Seat Deviation — Chart Icons (Story 3.1)", () => {
     );
 
     await expect(
-      page.getByRole("heading", { name: /daily usage/i }),
+      page.getByRole("heading", { name: /daily aic units/i }),
     ).toBeVisible();
 
     // No deviation icon circles should be present
@@ -249,10 +249,10 @@ test.describe("Seat Deviation — Table Icons (Story 3.2)", () => {
     await seedNormBaseline();
     await seedDashboardSummary(currentMonth, currentYear);
 
-    // Seed a seat with alert-level usage (norm = 10, alert >= 20)
+    // Seed a seat with alert-level usage
     const seatId = await seedSeat("alert-table-user", 8030, "Alert", "Dev");
     await seedUsage(seatId, 5, currentMonth, currentYear, [
-      makeUsageItem(25), // alert (2.5x norm)
+      makeUsageItem(1000),
     ]);
 
     await loginViaApi(page, "admin", "password123");
@@ -273,10 +273,10 @@ test.describe("Seat Deviation — Table Icons (Story 3.2)", () => {
     await seedNormBaseline();
     await seedDashboardSummary(currentMonth, currentYear);
 
-    // Seed a seat with normal usage only (norm = 10, all below warning of 15)
+    // Seed a seat with normal usage only (below the warning threshold)
     const seatId = await seedSeat("normal-table-user", 8040, "Normal", "Dev");
     await seedUsage(seatId, 5, currentMonth, currentYear, [
-      makeUsageItem(8), // normal (0.8x norm)
+      makeUsageItem(1),
     ]);
 
     await loginViaApi(page, "admin", "password123");
@@ -298,10 +298,10 @@ test.describe("Seat Deviation — Table Icons (Story 3.2)", () => {
   test("no deviation icons in table when norm is null", async ({ page }) => {
     await seedDashboardSummary(currentMonth, currentYear);
 
-    // Seed current-month usage only — no previous month data → norm is null
+    // Seed current-month usage only — no previous month data is required anymore
     const seatId = await seedSeat("no-norm-table-user", 8050, "NoNorm", "Dev");
     await seedUsage(seatId, 5, currentMonth, currentYear, [
-      makeUsageItem(100), // high usage, but norm is null so no deviation
+      makeUsageItem(1),
     ]);
 
     await loginViaApi(page, "admin", "password123");

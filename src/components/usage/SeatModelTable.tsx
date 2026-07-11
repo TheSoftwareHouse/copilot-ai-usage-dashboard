@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import Link from "next/link";
 import { formatCurrency } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
 
@@ -15,9 +16,19 @@ interface ModelBreakdownEntry {
 
 interface SeatModelTableProps {
   models: ModelBreakdownEntry[];
+  isAicMode?: boolean;
+  seatId?: number;
+  month?: number;
+  year?: number;
 }
 
-export default function SeatModelTable({ models }: SeatModelTableProps) {
+export default function SeatModelTable({
+  models,
+  isAicMode = false,
+  seatId,
+  month,
+  year,
+}: SeatModelTableProps) {
   const [sortBy, setSortBy] = useState<SortField>("totalRequests");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
@@ -46,9 +57,9 @@ export default function SeatModelTable({ models }: SeatModelTableProps) {
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
             <SortableTableHeader label="Model" field="model" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} />
-            <SortableTableHeader label="Total Requests" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            <SortableTableHeader label={isAicMode ? "AIC Units" : "Total Requests"} field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
             <SortableTableHeader label="Gross Amount" field="grossAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
-            <SortableTableHeader label="Net Amount" field="netAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            {!isAicMode && <SortableTableHeader label="Net Amount" field="netAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />}
           </tr>
         </thead>
         <tbody>
@@ -58,7 +69,16 @@ export default function SeatModelTable({ models }: SeatModelTableProps) {
               className="border-b border-gray-100 last:border-0"
             >
               <td className="px-6 py-3 text-gray-900 font-medium">
-                {m.model}
+                {seatId !== undefined && month !== undefined && year !== undefined ? (
+                  <Link
+                    href={`/usage/seats/${seatId}/models/${encodeURIComponent(m.model)}?month=${month}&year=${year}`}
+                    className="text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    {m.model}
+                  </Link>
+                ) : (
+                  m.model
+                )}
               </td>
               <td className="px-6 py-3 text-right text-gray-700">
                 {m.totalRequests.toLocaleString()}
@@ -66,9 +86,11 @@ export default function SeatModelTable({ models }: SeatModelTableProps) {
               <td className="px-6 py-3 text-right text-gray-700">
                 {formatCurrency(m.grossAmount)}
               </td>
-              <td className="px-6 py-3 text-right text-gray-700">
-                {formatCurrency(m.netAmount)}
-              </td>
+              {!isAicMode && (
+                <td className="px-6 py-3 text-right text-gray-700">
+                  {formatCurrency(m.netAmount)}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

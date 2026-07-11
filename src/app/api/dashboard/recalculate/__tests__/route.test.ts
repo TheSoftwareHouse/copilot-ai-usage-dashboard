@@ -116,8 +116,7 @@ async function seedStaleSummary(
     activeSeats: 2,
     totalSpending: 999.0,
     seatBaseCost: 0,
-    totalPremiumRequests: 100,
-    includedPremiumRequestsUsed: 0,
+    totalAiCredits: 100,
     modelUsage: [],
     mostActiveUsers: [],
     leastActiveUsers: [],
@@ -147,19 +146,17 @@ describe("POST /api/dashboard/recalculate", () => {
     expect(json.error).toBe("Authentication required");
   });
 
-  it("recalculates all months when no params provided", async () => {
+  it("skips pre-May 2026 months and recalculates supported months when no params are provided", async () => {
     await seedAuthSession();
 
     const seat1 = await seedSeat("user-1");
     const seat2 = await seedSeat("user-2");
 
-    // January usage: gross=10, discount=5, net=5
-    await seedUsage(seat1, 1, 1, 2026, [
-      makeUsageItem("GPT-4o", 100, 10.0, 50, 5.0),
+    await seedUsage(seat1, 1, 4, 2026, [
+      makeUsageItem("GPT-4o", 100, 10.0),
     ]);
-    // February usage: gross=20, discount=10, net=10
-    await seedUsage(seat2, 1, 2, 2026, [
-      makeUsageItem("GPT-4o", 200, 20.0, 100, 10.0),
+    await seedUsage(seat2, 1, 5, 2026, [
+      makeUsageItem("GPT-4o", 200, 20.0),
     ]);
 
     const request = makePostRequest();
@@ -167,31 +164,22 @@ describe("POST /api/dashboard/recalculate", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
 
-    expect(json.total).toBe(2);
-    expect(json.recalculatedMonths).toEqual(
-      expect.arrayContaining([
-        { month: 1, year: 2026 },
-        { month: 2, year: 2026 },
-      ]),
-    );
+    expect(json.total).toBe(1);
+    expect(json.recalculatedMonths).toEqual([{ month: 5, year: 2026 }]);
+    expect(json.skippedHistoricalMonths).toEqual([{ month: 4, year: 2026 }]);
 
-    // Verify the summary rows are correct
     const summaryRepo = testDs.getRepository(DashboardMonthlySummaryEntity);
 
-    const jan = await summaryRepo.findOne({ where: { month: 1, year: 2026 } });
-    expect(jan).not.toBeNull();
-    // netAmount=5, seatBaseCost=2×19=38, totalSpending=43
-    expect(Number(jan!.seatBaseCost)).toBe(38);
-    expect(Number(jan!.totalSpending)).toBe(43);
+    const apr = await summaryRepo.findOne({ where: { month: 4, year: 2026 } });
+    expect(apr).toBeNull();
 
-    const feb = await summaryRepo.findOne({ where: { month: 2, year: 2026 } });
-    expect(feb).not.toBeNull();
-    // netAmount=10, seatBaseCost=2×19=38, totalSpending=48
-    expect(Number(feb!.seatBaseCost)).toBe(38);
-    expect(Number(feb!.totalSpending)).toBe(48);
+    const may = await summaryRepo.findOne({ where: { month: 5, year: 2026 } });
+    expect(may).not.toBeNull();
+    expect(Number(may!.seatBaseCost)).toBe(38);
+    expect(Number(may!.totalSpending)).toBe(58);
   });
 
-  it("recalculates a single month when month and year params provided", async () => {
+  it("returns 409 for a pre-May 2026 month filter", async () => {
     await seedAuthSession();
 
     const seat1 = await seedSeat("user-1");
@@ -203,23 +191,42 @@ describe("POST /api/dashboard/recalculate", () => {
       makeUsageItem("GPT-4o", 200, 20.0, 100, 10.0),
     ]);
 
-    const request = makePostRequest({ month: "1", year: "2026" });
+    const request = makePostRequest({ month: "4", year: "2026" });
+    const response = await POST(request as never);
+    expect(response.status).toBe(409);
+    const json = await response.json();
+
+    expect(json.error).toBe(
+      "Selected historical period is read-only under the AIC Credits reporting policy",
+    );
+
+    const summaryRepo = testDs.getRepository(DashboardMonthlySummaryEntity);
+    const apr = await summaryRepo.findOne({ where: { month: 4, year: 2026 } });
+    expect(apr).toBeNull();
+  });
+
+  it("recalculates a supported month when month and year params are provided", async () => {
+    await seedAuthSession();
+
+    const seat1 = await seedSeat("user-1");
+
+    await seedUsage(seat1, 1, 5, 2026, [
+      makeUsageItem("GPT-4o", 100, 10.0),
+    ]);
+
+    const request = makePostRequest({ month: "5", year: "2026" });
     const response = await POST(request as never);
     expect(response.status).toBe(200);
     const json = await response.json();
 
     expect(json.total).toBe(1);
-    expect(json.recalculatedMonths).toEqual([{ month: 1, year: 2026 }]);
+    expect(json.recalculatedMonths).toEqual([{ month: 5, year: 2026 }]);
 
-    // Only January should have a summary row
     const summaryRepo = testDs.getRepository(DashboardMonthlySummaryEntity);
-    const jan = await summaryRepo.findOne({ where: { month: 1, year: 2026 } });
-    expect(jan).not.toBeNull();
-    expect(Number(jan!.seatBaseCost)).toBe(19); // 1 active seat × $19
-
-    // February should not have been recalculated
-    const feb = await summaryRepo.findOne({ where: { month: 2, year: 2026 } });
-    expect(feb).toBeNull();
+    const may = await summaryRepo.findOne({ where: { month: 5, year: 2026 } });
+    expect(may).not.toBeNull();
+    expect(Number(may!.seatBaseCost)).toBe(19);
+    expect(may!.totalAiCredits).toBe(100);
   });
 
   it("returns 400 for invalid month parameter", async () => {
@@ -281,33 +288,31 @@ describe("POST /api/dashboard/recalculate", () => {
     const seat2 = await seedSeat("user-2");
 
     // Seed usage: gross=50, discount=50, net=0 (fully discounted)
-    await seedUsage(seat1, 1, 2, 2026, [
+    await seedUsage(seat1, 1, 5, 2026, [
       makeUsageItem("GPT-4o", 300, 50.0, 300, 50.0),
     ]);
-    await seedUsage(seat2, 1, 2, 2026, [
+    await seedUsage(seat2, 1, 5, 2026, [
       makeUsageItem("GPT-4o", 200, 30.0, 200, 30.0),
     ]);
 
-    // Seed stale summary with old grossAmount-based values
     await seedStaleSummary({
-      month: 2,
+      month: 5,
       year: 2026,
-      totalSpending: 80.0, // was SUM(grossAmount)=50+30
-      seatBaseCost: 0,     // was not computed
+      totalSpending: 80.0,
+      seatBaseCost: 0,
     });
 
-    const request = makePostRequest({ month: "2", year: "2026" });
+    const request = makePostRequest({ month: "5", year: "2026" });
     const response = await POST(request as never);
     expect(response.status).toBe(200);
 
     const summaryRepo = testDs.getRepository(DashboardMonthlySummaryEntity);
-    const summary = await summaryRepo.findOne({ where: { month: 2, year: 2026 } });
+    const summary = await summaryRepo.findOne({ where: { month: 5, year: 2026 } });
 
-    // All usage is fully discounted → netAmount = 0
-    // seatBaseCost = 2 active × $19 = 38
-    // totalSpending = 0 + 38 = 38
+    // grossAmount = 50 + 30 = 80, seatBaseCost = 2 active × $19 = 38
+    // totalSpending = 80 + 38 = 118
     expect(Number(summary!.seatBaseCost)).toBe(38);
-    expect(Number(summary!.totalSpending)).toBe(38);
+    expect(Number(summary!.totalSpending)).toBe(118);
   });
 
   it("seatBaseCost reflects current active seat count × 19", async () => {
@@ -319,20 +324,20 @@ describe("POST /api/dashboard/recalculate", () => {
     await seedSeat("user-3", SeatStatus.ACTIVE);
     await seedSeat("user-4", SeatStatus.INACTIVE);
 
-    await seedUsage(seat1, 1, 2, 2026, [
+    await seedUsage(seat1, 1, 5, 2026, [
       makeUsageItem("GPT-4o", 10, 1.0, 5, 0.5),
     ]);
 
-    const request = makePostRequest({ month: "2", year: "2026" });
+    const request = makePostRequest({ month: "5", year: "2026" });
     const response = await POST(request as never);
     expect(response.status).toBe(200);
 
     const summaryRepo = testDs.getRepository(DashboardMonthlySummaryEntity);
-    const summary = await summaryRepo.findOne({ where: { month: 2, year: 2026 } });
+    const summary = await summaryRepo.findOne({ where: { month: 5, year: 2026 } });
 
     // 3 active seats × $19 = $57
     expect(Number(summary!.seatBaseCost)).toBe(57);
-    // netAmount = 1.0 - 0.5 = 0.5, totalSpending = 0.5 + 57 = 57.5
-    expect(Number(summary!.totalSpending)).toBe(57.5);
+    // grossAmount = 1.0, totalSpending = 1.0 + 57 = 58.0
+    expect(Number(summary!.totalSpending)).toBe(58);
   });
 });

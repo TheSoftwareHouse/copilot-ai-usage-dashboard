@@ -22,7 +22,6 @@ vi.mock("@/lib/db", () => ({
   getDb: async () => testDs,
 }));
 
-vi.mock("@/lib/get-premium-allowance");
 
 let mockCookieStore: Record<string, string> = {};
 vi.mock("next/headers", () => ({
@@ -35,7 +34,6 @@ vi.mock("next/headers", () => ({
 }));
 
 const { GET } = await import("@/app/api/usage/teams/rankings/route");
-const { getPremiumAllowance } = await import("@/lib/get-premium-allowance");
 const { hashPassword, createSession, SESSION_COOKIE_NAME } = await import(
   "@/lib/auth"
 );
@@ -118,7 +116,6 @@ describe("GET /api/usage/teams/rankings", () => {
   beforeEach(async () => {
     await cleanDatabase(testDs);
     mockCookieStore = {};
-    vi.mocked(getPremiumAllowance).mockResolvedValue(300);
   });
 
   it("returns 401 without session", async () => {
@@ -148,7 +145,7 @@ describe("GET /api/usage/teams/rankings", () => {
   it("returns correct top teams ordered by usage percent descending", async () => {
     await seedAuthSession();
 
-    // premiumRequestsPerSeat = 300
+    // Legacy per-seat allowance removed; ranking is based on raw credit totals.
     // Team A: 2 members, seat1=300, seat2=150 → capped=300+150=450 → 450/(2×300)×100 = 75%
     const seat1 = await seedSeat({ githubUsername: "user1", githubUserId: 1001 });
     const seat2 = await seedSeat({ githubUsername: "user2", githubUserId: 1002 });
@@ -176,25 +173,27 @@ describe("GET /api/usage/teams/rankings", () => {
     const json = await response.json();
 
     expect(json.mostActive).toHaveLength(3);
-    // Ordered: Team C (90%), Team A (75%), Team B (40%)
-    expect(json.mostActive[0].teamName).toBe("Team C");
-    expect(json.mostActive[0].memberCount).toBe(1);
-    expect(json.mostActive[0].usagePercent).toBeCloseTo(90.0, 1);
-    expect(json.mostActive[0].teamId).toBe(teamC.id);
+    // Ordered by raw gross credits: Team A (450), Team C (270), Team B (60)
+    expect(json.mostActive[0].teamName).toBe("Team A");
+    expect(json.mostActive[0].memberCount).toBe(2);
+    expect(json.mostActive[0]).not.toHaveProperty("usagePercent");
+    expect(json.mostActive[0].totalAiCredits).toBe(450);
 
-    expect(json.mostActive[1].teamName).toBe("Team A");
-    expect(json.mostActive[1].memberCount).toBe(2);
-    expect(json.mostActive[1].usagePercent).toBeCloseTo(75.0, 1);
+    expect(json.mostActive[1].teamName).toBe("Team C");
+    expect(json.mostActive[1].memberCount).toBe(1);
+    expect(json.mostActive[1]).not.toHaveProperty("usagePercent");
+    expect(json.mostActive[1].teamId).toBe(teamC.id);
 
     expect(json.mostActive[2].teamName).toBe("Team B");
     expect(json.mostActive[2].memberCount).toBe(1);
-    expect(json.mostActive[2].usagePercent).toBeCloseTo(40.0, 1);
+    expect(json.mostActive[2]).not.toHaveProperty("usagePercent");
+    expect(json.mostActive[2].totalAiCredits).toBe(120);
 
     expect(json.month).toBe(2);
     expect(json.year).toBe(2026);
   });
 
-  it("returns correct bottom teams ordered by usage percent ascending", async () => {
+  it("returns correct bottom teams ordered by gross credits ascending", async () => {
     await seedAuthSession();
 
     // Team X: 1 member, 60 requests → 20%
@@ -216,9 +215,9 @@ describe("GET /api/usage/teams/rankings", () => {
     // leastActive: Team X (20%) first, Team Y (80%) second
     expect(json.leastActive).toHaveLength(2);
     expect(json.leastActive[0].teamName).toBe("Team X");
-    expect(json.leastActive[0].usagePercent).toBeCloseTo(20.0, 1);
+    expect(json.leastActive[0]).not.toHaveProperty("usagePercent");
     expect(json.leastActive[1].teamName).toBe("Team Y");
-    expect(json.leastActive[1].usagePercent).toBeCloseTo(80.0, 1);
+    expect(json.leastActive[1]).not.toHaveProperty("usagePercent");
   });
 
   it("defaults to current month/year when params are missing", async () => {
@@ -294,9 +293,8 @@ describe("GET /api/usage/teams/rankings", () => {
     expect(json.leastActive[4].teamName).toBe("Team-2"); // 200 → 66.7%
   });
 
-  it("returns entries with usagePercent 0 when premiumRequestsPerSeat is 0", async () => {
+  it("returns entries without legacy usagePercent fields", async () => {
     await seedAuthSession();
-    vi.mocked(getPremiumAllowance).mockResolvedValueOnce(0);
 
     const seat1 = await seedSeat({ githubUsername: "user-x", githubUserId: 5001 });
     const teamA = await seedTeam("Team X");
@@ -313,12 +311,12 @@ describe("GET /api/usage/teams/rankings", () => {
     const json = await response.json();
 
     expect(json.mostActive).toHaveLength(2);
-    expect(json.mostActive[0].usagePercent).toBe(0);
-    expect(json.mostActive[1].usagePercent).toBe(0);
+    expect(json.mostActive[0]).not.toHaveProperty("usagePercent");
+    expect(json.mostActive[1]).not.toHaveProperty("usagePercent");
 
     expect(json.leastActive).toHaveLength(2);
-    expect(json.leastActive[0].usagePercent).toBe(0);
-    expect(json.leastActive[1].usagePercent).toBe(0);
+    expect(json.leastActive[0]).not.toHaveProperty("usagePercent");
+    expect(json.leastActive[1]).not.toHaveProperty("usagePercent");
   });
 
   it("includes teams whose members have zero actual usage in the rankings", async () => {
@@ -343,13 +341,13 @@ describe("GET /api/usage/teams/rankings", () => {
     // Both teams should appear
     expect(json.mostActive).toHaveLength(2);
     expect(json.mostActive[0].teamName).toBe("Active Team");
-    expect(json.mostActive[0].usagePercent).toBeCloseTo(50.0, 1);
+    expect(json.mostActive[0]).not.toHaveProperty("usagePercent");
     expect(json.mostActive[1].teamName).toBe("Idle Team");
-    expect(json.mostActive[1].usagePercent).toBeCloseTo(0.0, 1);
+    expect(json.mostActive[1]).not.toHaveProperty("usagePercent");
 
     expect(json.leastActive).toHaveLength(2);
     expect(json.leastActive[0].teamName).toBe("Idle Team");
-    expect(json.leastActive[0].usagePercent).toBeCloseTo(0.0, 1);
+    expect(json.leastActive[0]).not.toHaveProperty("usagePercent");
     expect(json.leastActive[1].teamName).toBe("Active Team");
   });
 

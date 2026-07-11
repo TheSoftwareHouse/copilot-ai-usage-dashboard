@@ -20,6 +20,8 @@ interface MemberDailyUsage {
 interface TeamDailyChartProps {
   dailyUsagePerMember: MemberDailyUsage[];
   daysInMonth: number;
+  metricLabel?: string;
+  accessibleLabel?: string;
 }
 
 const LINE_COLOURS = [
@@ -38,6 +40,8 @@ const LINE_COLOURS = [
 export default function TeamDailyChart({
   dailyUsagePerMember,
   daysInMonth,
+  metricLabel = "Total Requests",
+  accessibleLabel,
 }: TeamDailyChartProps) {
   // Build a map per member: day -> totalRequests
   const memberMaps = dailyUsagePerMember.map((member) => {
@@ -55,8 +59,12 @@ export default function TeamDailyChart({
     return point;
   });
 
+  const chartAccessibleLabel =
+    accessibleLabel ??
+    `Daily usage line chart showing ${metricLabel.toLowerCase()} per day for each team member`;
+
   return (
-    <div role="img" aria-label="Daily usage line chart showing total requests per day for each team member">
+    <div role="img" aria-label={chartAccessibleLabel}>
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" />
@@ -64,6 +72,10 @@ export default function TeamDailyChart({
           <YAxis tick={{ fontSize: 12 }} />
           <Tooltip
             labelFormatter={(label) => `Day ${label}`}
+            formatter={(value: number | string | undefined) => [
+              Number(value ?? 0).toLocaleString(),
+              metricLabel,
+            ]}
           />
           <Legend />
           {dailyUsagePerMember.map((member, index) => (

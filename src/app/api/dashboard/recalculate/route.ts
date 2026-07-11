@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
 import { refreshDashboardMetrics } from "@/lib/dashboard-metrics";
 import { handleRouteError } from "@/lib/api-helpers";
+import { isAicReportingMonth } from "@/lib/aic-reporting";
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth();
@@ -15,7 +16,8 @@ export async function POST(request: NextRequest) {
 
     const dataSource = await getDb();
 
-    let monthsToRecalculate: { month: number; year: number }[];
+    let monthsToRecalculate: { month: number; year: number }[] = [];
+    let skippedHistoricalMonths: { month: number; year: number }[] = [];
 
     if (monthParam !== null || yearParam !== null) {
       // Both params are required when filtering
@@ -43,6 +45,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      if (!isAicReportingMonth(month, year)) {
+        return NextResponse.json(
+          {
+            error:
+              "Selected historical period is read-only under the AIC Credits reporting policy",
+          },
+          { status: 409 },
+        );
+      }
+
       monthsToRecalculate = [{ month, year }];
     } else {
       // All months: find distinct (month, year) from copilot_usage UNION dashboard_monthly_summary
@@ -53,10 +65,17 @@ export async function POST(request: NextRequest) {
          ORDER BY "year" ASC, "month" ASC`,
       );
 
-      monthsToRecalculate = rows.map((r) => ({
+      const allMonths = rows.map((r) => ({
         month: Number(r.month),
         year: Number(r.year),
       }));
+
+      monthsToRecalculate = allMonths.filter(({ month, year }) =>
+        isAicReportingMonth(month, year),
+      );
+      skippedHistoricalMonths = allMonths.filter(({ month, year }) =>
+        !isAicReportingMonth(month, year),
+      );
     }
 
     const recalculatedMonths: { month: number; year: number }[] = [];
@@ -68,6 +87,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       recalculatedMonths,
+      skippedHistoricalMonths,
       total: recalculatedMonths.length,
     });
   } catch (error) {

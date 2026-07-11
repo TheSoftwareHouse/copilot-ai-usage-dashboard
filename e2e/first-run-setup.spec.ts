@@ -52,8 +52,8 @@ test.describe("First-Run Setup Flow", () => {
   }) => {
     const client = await getClient();
     await client.query(
-      `INSERT INTO configuration ("singletonKey", "apiMode", "entityName", "premiumRequestsPerSeat")
-       VALUES ('GLOBAL', 'organisation', 'AcmeCorp', 300)`
+      `INSERT INTO configuration ("singletonKey", "apiMode", "entityName")
+       VALUES ('GLOBAL', 'organisation', 'AcmeCorp')`
     );
     await client.end();
 
@@ -155,8 +155,8 @@ test.describe("First-Run Setup Flow", () => {
        VALUES ('GLOBAL', 12345, 'test-app', 'Test App', 'encrypted-key', 'encrypted-secret', 'Iv1.abc', 'encrypted-client', 'https://github.com/apps/test-app', 99, 'testowner', 55555)`
     );
     await client.query(
-      `INSERT INTO configuration ("singletonKey", "apiMode", "entityName", "premiumRequestsPerSeat")
-       VALUES ('GLOBAL', 'organisation', 'TestOrg', 300)`
+      `INSERT INTO configuration ("singletonKey", "apiMode", "entityName")
+       VALUES ('GLOBAL', 'organisation', 'TestOrg')`
     );
     await client.end();
 

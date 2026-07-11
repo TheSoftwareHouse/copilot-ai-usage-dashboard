@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
 import { SEAT_BASE_COST_USD } from "@/lib/constants";
+import { EntityManager } from "typeorm";
 import {
   DashboardMonthlySummaryEntity,
   type ModelUsageEntry,
@@ -13,15 +14,21 @@ import { SeatStatus } from "@/entities/enums";
  *
  * Aggregates data from `copilot_seat` and `copilot_usage` tables and writes
  * the result into `dashboard_monthly_summary`. Called after successful
- * usage-collection and seat-sync jobs.
+ * seat-sync jobs.
  */
 export async function refreshDashboardMetrics(
   month: number,
   year: number,
+  entityManager?: EntityManager,
 ): Promise<void> {
-  const dataSource = await getDb();
-  const seatRepository = dataSource.getRepository(CopilotSeatEntity);
-  const summaryRepository = dataSource.getRepository(
+  const dataSource = entityManager ? null : await getDb();
+  const queryRunner = entityManager ?? dataSource;
+  if (!queryRunner) {
+    throw new Error("Dashboard metrics query runner is not available");
+  }
+
+  const seatRepository = queryRunner.getRepository(CopilotSeatEntity);
+  const summaryRepository = queryRunner.getRepository(
     DashboardMonthlySummaryEntity,
   );
 
@@ -31,13 +38,13 @@ export async function refreshDashboardMetrics(
     where: { status: SeatStatus.ACTIVE },
   });
 
-  // 2. Per-model usage: SUM(grossQuantity) and SUM(netAmount) grouped by model
+  // 2. Per-model usage: SUM(grossQuantity) and AIC spending grouped by model
   const modelUsageRows: { model: string; totalRequests: number; totalAmount: number }[] =
-    await dataSource.query(
+    await queryRunner.query(
       `SELECT
          item->>'model' AS "model",
          SUM((item->>'grossQuantity')::numeric) AS "totalRequests",
-         SUM((item->>'netAmount')::numeric) AS "totalAmount"
+         SUM((item->>'grossAmount')::numeric) AS "totalAmount"
        FROM copilot_usage cu,
             jsonb_array_elements(cu."usageItems") AS item
        WHERE cu."month" = $1 AND cu."year" = $2
@@ -60,7 +67,7 @@ export async function refreshDashboardMetrics(
     lastName: string | null;
     totalRequests: number;
     totalSpending: number;
-  }[] = await dataSource.query(
+  }[] = await queryRunner.query(
     `SELECT
        cs.id AS "seatId",
        cs."githubUsername",
@@ -95,7 +102,7 @@ export async function refreshDashboardMetrics(
     lastName: string | null;
     totalRequests: number;
     totalSpending: number;
-  }[] = await dataSource.query(
+  }[] = await queryRunner.query(
     `SELECT
        cs.id AS "seatId",
        cs."githubUsername",
@@ -122,31 +129,28 @@ export async function refreshDashboardMetrics(
     totalSpending: Number(row.totalSpending),
   }));
 
-  // 5. Spending + premium request metrics (single scan)
+  // 5. Spending + AIC-credit metrics (single scan)
   const aggregateResult: {
-    netPremiumSpending: string | null;
-    totalPremiumRequests: string | null;
-    includedPremiumRequestsUsed: string | null;
-  }[] = await dataSource.query(
+    usageSpending: string | null;
+    totalAiCredits: string | null;
+  }[] = await queryRunner.query(
     `SELECT
-       COALESCE(SUM((item->>'netAmount')::numeric), 0)        AS "netPremiumSpending",
-       COALESCE(SUM((item->>'grossQuantity')::numeric), 0)    AS "totalPremiumRequests",
-       COALESCE(SUM((item->>'discountQuantity')::numeric), 0) AS "includedPremiumRequestsUsed"
+       COALESCE(SUM((item->>'grossAmount')::numeric), 0) AS "usageSpending",
+       COALESCE(SUM((item->>'grossQuantity')::numeric), 0) AS "totalAiCredits"
      FROM copilot_usage cu,
           jsonb_array_elements(cu."usageItems") AS item
      WHERE cu."month" = $1 AND cu."year" = $2`,
     [month, year],
   );
 
-  const netPremiumSpending = Number(aggregateResult[0]?.netPremiumSpending ?? 0);
-  const totalPremiumRequests = Math.round(Number(aggregateResult[0]?.totalPremiumRequests ?? 0));
-  const includedPremiumRequestsUsed = Math.round(Number(aggregateResult[0]?.includedPremiumRequestsUsed ?? 0));
+  const usageSpending = Number(aggregateResult[0]?.usageSpending ?? 0);
+  const totalAiCredits = Math.round(Number(aggregateResult[0]?.totalAiCredits ?? 0));
 
   // Seat base cost: per active seat per month
   const seatBaseCost = activeSeats * SEAT_BASE_COST_USD;
 
-  // Total spending = paid premium requests + seat license cost
-  const totalSpending = netPremiumSpending + seatBaseCost;
+  // Total spending = usage cost + seat license cost
+  const totalSpending = usageSpending + seatBaseCost;
 
   // 6. Upsert into dashboard_monthly_summary
   await summaryRepository
@@ -160,8 +164,7 @@ export async function refreshDashboardMetrics(
       activeSeats,
       totalSpending,
       seatBaseCost,
-      totalPremiumRequests,
-      includedPremiumRequestsUsed,
+      totalAiCredits,
       modelUsage,
       mostActiveUsers,
       leastActiveUsers,
@@ -172,8 +175,7 @@ export async function refreshDashboardMetrics(
         "activeSeats",
         "totalSpending",
         "seatBaseCost",
-        "totalPremiumRequests",
-        "includedPremiumRequestsUsed",
+        "totalAiCredits",
         "modelUsage",
         "mostActiveUsers",
         "leastActiveUsers",

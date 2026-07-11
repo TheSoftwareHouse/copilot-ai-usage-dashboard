@@ -139,6 +139,12 @@ export default function DailyUsageDetail({
   if (!data) return null;
 
   const dateLabel = `${MONTH_NAMES[data.month - 1]} ${data.day}, ${data.year}`;
+  const pageTitle = "Daily AIC Units";
+  const requestsLabel = "Total AIC Units";
+  const amountLabel = "AIC Cost";
+  const tableRequestsLabel = "AIC Units";
+  const tableSpendingLabel = "AIC Cost";
+  const emptyMessage = "No AIC CSV data for this day yet.";
 
   if (data.summary.totalRequests === 0) {
     return (
@@ -149,12 +155,10 @@ export default function DailyUsageDetail({
         >
           ← Back to Dashboard
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">
-          Daily Usage — {dateLabel}
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-900">{pageTitle} — {dateLabel}</h1>
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
-            No usage data for this day.
+            {emptyMessage}
           </p>
         </div>
       </div>
@@ -169,22 +173,18 @@ export default function DailyUsageDetail({
       >
         ← Back to Dashboard
       </Link>
-      <h1 className="text-2xl font-bold text-gray-900">
-        Daily Usage — {dateLabel}
-      </h1>
+      <h1 className="text-2xl font-bold text-gray-900">{pageTitle} — {dateLabel}</h1>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-medium text-gray-500">
-            Total Premium Requests
-          </h2>
+          <h2 className="text-sm font-medium text-gray-500">{requestsLabel}</h2>
           <p className="mt-2 text-3xl font-bold text-gray-900">
             {data.summary.totalRequests.toLocaleString()}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-medium text-gray-500">Total Spending</h2>
+          <h2 className="text-sm font-medium text-gray-500">{amountLabel}</h2>
           <p className="mt-2 text-3xl font-bold text-gray-900">
             {formatCurrency(data.summary.totalSpending)}
           </p>
@@ -235,7 +235,7 @@ export default function DailyUsageDetail({
                     Department
                   </th>
                   <SortableTableHeader
-                    label="Requests"
+                    label={tableRequestsLabel}
                     field="totalRequests"
                     currentSortBy={sortBy}
                     currentSortOrder={sortOrder}
@@ -243,7 +243,7 @@ export default function DailyUsageDetail({
                     align="right"
                   />
                   <SortableTableHeader
-                    label="Spending"
+                    label={tableSpendingLabel}
                     field="totalSpending"
                     currentSortBy={sortBy}
                     currentSortOrder={sortOrder}
@@ -256,9 +256,7 @@ export default function DailyUsageDetail({
                 {sortedUsers.map((user) => (
                   <tr
                     key={user.seatId}
-                    className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50"
-                    role="link"
-                    onClick={() => router.push(`/usage/seats/${user.seatId}?month=${data.month}&year=${data.year}`)}
+                    className="border-b border-gray-100 last:border-0"
                   >
                     <td className="px-6 py-3 text-gray-900">
                       {user.githubUsername}
@@ -305,13 +303,13 @@ export default function DailyUsageDetail({
                     scope="col"
                     className="px-6 py-3 text-right font-medium text-gray-500"
                   >
-                    Requests
+                    AIC Units
                   </th>
                   <th
                     scope="col"
                     className="px-6 py-3 text-right font-medium text-gray-500"
                   >
-                    Spending
+                    AIC Cost
                   </th>
                 </tr>
               </thead>

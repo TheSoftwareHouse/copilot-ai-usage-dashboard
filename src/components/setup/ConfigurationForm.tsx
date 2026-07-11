@@ -16,9 +16,6 @@ interface ConfigurationFormProps {
   initialValues?: {
     apiMode?: string;
     entityName?: string;
-    premiumRequestsPerSeat?: number;
-    telemetryApiKey?: string | null;
-    normSeatsCount?: number;
     deviationWarningThreshold?: number;
     deviationAlertThreshold?: number;
   };
@@ -35,20 +32,11 @@ export default function ConfigurationForm({
   const [entityName, setEntityName] = useState(
     initialValues?.entityName ?? ""
   );
-  const [premiumRequestsPerSeat, setPremiumRequestsPerSeat] = useState<string>(
-    String(initialValues?.premiumRequestsPerSeat ?? 300)
-  );
-  const [telemetryApiKey, setTelemetryApiKey] = useState<string>(
-    initialValues?.telemetryApiKey ?? ""
-  );
-  const [normSeatsCount, setNormSeatsCount] = useState<string>(
-    String(initialValues?.normSeatsCount ?? 30)
-  );
   const [deviationWarningThreshold, setDeviationWarningThreshold] = useState<string>(
-    String(initialValues?.deviationWarningThreshold ?? 1.5)
+    String(initialValues?.deviationWarningThreshold ?? 500)
   );
   const [deviationAlertThreshold, setDeviationAlertThreshold] = useState<string>(
-    String(initialValues?.deviationAlertThreshold ?? 2.0)
+    String(initialValues?.deviationAlertThreshold ?? 1000)
   );
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -66,15 +54,7 @@ export default function ConfigurationForm({
 
     // Client-side validation
     if (mode === "edit") {
-      const parsedValue = parseInt(premiumRequestsPerSeat, 10);
-      const payload: Record<string, unknown> = {
-        premiumRequestsPerSeat: isNaN(parsedValue) ? premiumRequestsPerSeat as unknown as number : parsedValue,
-      };
-      if (telemetryApiKey !== (initialValues?.telemetryApiKey ?? "")) {
-        payload.telemetryApiKey = telemetryApiKey || null;
-      }
-      const parsedNormSeats = parseInt(normSeatsCount, 10);
-      payload.normSeatsCount = isNaN(parsedNormSeats) ? normSeatsCount as unknown as number : parsedNormSeats;
+      const payload: Record<string, unknown> = {};
       const parsedWarning = parseFloat(deviationWarningThreshold);
       payload.deviationWarningThreshold = isNaN(parsedWarning) ? deviationWarningThreshold as unknown as number : parsedWarning;
       const parsedAlert = parseFloat(deviationAlertThreshold);
@@ -267,125 +247,24 @@ export default function ConfigurationForm({
       </div>
       )}
 
-      {/* Premium Requests Per Seat — edit mode only */}
-      {mode === "edit" && (
-        <div>
-          <label
-            htmlFor="premiumRequestsPerSeat"
-            className="block text-sm font-medium text-gray-900 mb-1"
-          >
-            Premium requests per seat (monthly allowance)
-          </label>
-          <input
-            id="premiumRequestsPerSeat"
-            type="number"
-            name="premiumRequestsPerSeat"
-            value={premiumRequestsPerSeat}
-            onChange={(e) => setPremiumRequestsPerSeat(e.target.value)}
-            min={1}
-            max={100000}
-            step={1}
-            aria-describedby={fieldErrors.premiumRequestsPerSeat ? "premiumRequestsPerSeat-error" : undefined}
-            aria-invalid={!!fieldErrors.premiumRequestsPerSeat}
-            className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          {fieldErrors.premiumRequestsPerSeat && (
-            <p
-              id="premiumRequestsPerSeat-error"
-              className="mt-1 text-sm text-red-600"
-              role="alert"
-            >
-              {fieldErrors.premiumRequestsPerSeat[0]}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Telemetry API Key — edit mode only */}
-      {mode === "edit" && (
-        <div>
-          <label
-            htmlFor="telemetryApiKey"
-            className="block text-sm font-medium text-gray-900 mb-1"
-          >
-            Telemetry API Key
-          </label>
-          <p className="text-xs text-gray-500 mb-2">
-            Used to authenticate telemetry data ingestion requests. Leave empty to disable telemetry ingestion.
-          </p>
-          <input
-            id="telemetryApiKey"
-            type="text"
-            name="telemetryApiKey"
-            value={telemetryApiKey}
-            onChange={(e) => setTelemetryApiKey(e.target.value)}
-            placeholder="Enter API key"
-            aria-describedby={fieldErrors.telemetryApiKey ? "telemetryApiKey-error" : undefined}
-            aria-invalid={!!fieldErrors.telemetryApiKey}
-            className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-          {fieldErrors.telemetryApiKey && (
-            <p
-              id="telemetryApiKey-error"
-              className="mt-1 text-sm text-red-600"
-              role="alert"
-            >
-              {fieldErrors.telemetryApiKey[0]}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Usage Norm Settings — edit mode only */}
+      {/* AIC Unit Thresholds — edit mode only */}
       {mode === "edit" && (
         <div className="border-t border-gray-200 pt-6">
           <h3 className="text-sm font-medium text-gray-900 mb-4">
-            Usage Norm Settings
+            AIC Unit Thresholds
           </h3>
 
           <div className="space-y-4">
-            {/* Norm Seats Count */}
-            <div>
-              <label
-                htmlFor="normSeatsCount"
-                className="block text-sm font-medium text-gray-900 mb-1"
-              >
-                Norm seats count
-              </label>
-              <input
-                id="normSeatsCount"
-                type="number"
-                name="normSeatsCount"
-                value={normSeatsCount}
-                onChange={(e) => setNormSeatsCount(e.target.value)}
-                min={1}
-                max={10000}
-                step={1}
-                aria-describedby={fieldErrors.normSeatsCount ? "normSeatsCount-error" : undefined}
-                aria-invalid={!!fieldErrors.normSeatsCount}
-                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              {fieldErrors.normSeatsCount && (
-                <p
-                  id="normSeatsCount-error"
-                  className="mt-1 text-sm text-red-600"
-                  role="alert"
-                >
-                  {fieldErrors.normSeatsCount[0]}
-                </p>
-              )}
-            </div>
-
             {/* Warning Threshold */}
             <div>
               <label
                 htmlFor="deviationWarningThreshold"
                 className="block text-sm font-medium text-gray-900 mb-1"
               >
-                Warning threshold (multiplier)
+                Warning threshold (AIC Units)
               </label>
               <p className="text-xs text-gray-500 mb-2">
-                E.g. 1.5 means 1.5× the norm triggers a warning.
+                Trigger a warning as soon as a seat exceeds this many AIC Units in a day.
               </p>
               <input
                 id="deviationWarningThreshold"
@@ -393,8 +272,8 @@ export default function ConfigurationForm({
                 name="deviationWarningThreshold"
                 value={deviationWarningThreshold}
                 onChange={(e) => setDeviationWarningThreshold(e.target.value)}
-                min={1.01}
-                max={99.99}
+                min={0.01}
+                max={50000}
                 step={0.01}
                 aria-describedby={fieldErrors.deviationWarningThreshold ? "deviationWarningThreshold-error" : undefined}
                 aria-invalid={!!fieldErrors.deviationWarningThreshold}
@@ -417,10 +296,10 @@ export default function ConfigurationForm({
                 htmlFor="deviationAlertThreshold"
                 className="block text-sm font-medium text-gray-900 mb-1"
               >
-                Alert threshold (multiplier)
+                Alert threshold (AIC Units)
               </label>
               <p className="text-xs text-gray-500 mb-2">
-                E.g. 2.0 means 2× the norm triggers an alert. Must be greater than warning threshold.
+                Trigger an alert as soon as a seat exceeds this many AIC Units in a day. Must be greater than the warning threshold.
               </p>
               <input
                 id="deviationAlertThreshold"
@@ -428,8 +307,8 @@ export default function ConfigurationForm({
                 name="deviationAlertThreshold"
                 value={deviationAlertThreshold}
                 onChange={(e) => setDeviationAlertThreshold(e.target.value)}
-                min={1.01}
-                max={99.99}
+                min={0.01}
+                max={50000}
                 step={0.01}
                 aria-describedby={fieldErrors.deviationAlertThreshold ? "deviationAlertThreshold-error" : undefined}
                 aria-invalid={!!fieldErrors.deviationAlertThreshold}

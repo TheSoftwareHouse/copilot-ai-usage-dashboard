@@ -12,11 +12,6 @@ import {
   type CopilotUsage,
 } from "@/entities/copilot-usage.entity";
 import {
-  ConfigurationEntity,
-  type Configuration,
-} from "@/entities/configuration.entity";
-import { ApiMode } from "@/entities/enums";
-import {
   getTestDataSource,
   cleanDatabase,
   destroyTestDataSource,
@@ -41,9 +36,6 @@ vi.mock("next/headers", () => ({
 const { GET } = await import("@/app/api/seats/low-usage/route");
 const { hashPassword, createSession, SESSION_COOKIE_NAME } = await import(
   "@/lib/auth"
-);
-const { invalidatePremiumAllowanceCache } = await import(
-  "@/lib/get-premium-allowance"
 );
 
 async function seedAuthSession(options?: { role?: string }): Promise<void> {
@@ -95,20 +87,6 @@ async function seedUsage(
   return usageRepo.save(overrides as Partial<CopilotUsage>);
 }
 
-async function seedConfiguration(
-  overrides?: Partial<Configuration>,
-): Promise<Configuration> {
-  const configRepo = testDs.getRepository(ConfigurationEntity);
-  return configRepo.save(
-    configRepo.create({
-      apiMode: ApiMode.ORGANISATION,
-      entityName: "test-org",
-      premiumRequestsPerSeat: 300,
-      ...overrides,
-    }),
-  );
-}
-
 function makeUsageItem(grossQuantity: number) {
   return {
     product: "Copilot",
@@ -141,7 +119,6 @@ describe("GET /api/seats/low-usage", () => {
   beforeEach(async () => {
     await cleanDatabase(testDs);
     mockCookieStore = {};
-    invalidatePremiumAllowanceCache();
   });
 
   it("returns 401 without session", async () => {
@@ -164,7 +141,6 @@ describe("GET /api/seats/low-usage", () => {
 
   it("returns empty response when no seats exist", async () => {
     await seedAuthSession();
-    await seedConfiguration();
     const request = makeGetRequest();
     const response = await GET(request as never);
     expect(response.status).toBe(200);
@@ -174,12 +150,11 @@ describe("GET /api/seats/low-usage", () => {
     expect(json.page).toBe(1);
     expect(json.pageSize).toBe(10);
     expect(json.totalPages).toBe(1);
-    expect(json.premiumRequestsPerSeat).toBe(300);
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
   });
 
-  it("returns only active seats with usage < 100%", async () => {
+  it("returns active seats with gross credit totals", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     const lowSeat = await seedSeat({
       githubUsername: "low-user",
@@ -216,14 +191,14 @@ describe("GET /api/seats/low-usage", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
 
-    expect(json.seats).toHaveLength(1);
+    expect(json.seats).toHaveLength(2);
     expect(json.seats[0].githubUsername).toBe("low-user");
-    expect(json.total).toBe(1);
+    expect(json.seats[1].githubUsername).toBe("high-user");
+    expect(json.total).toBe(2);
   });
 
   it("excludes inactive seats", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     const inactiveSeat = await seedSeat({
       githubUsername: "inactive-user",
@@ -246,9 +221,8 @@ describe("GET /api/seats/low-usage", () => {
     expect(json.total).toBe(0);
   });
 
-  it("excludes seats at exactly 100% or higher", async () => {
+  it("includes seats regardless of legacy allowance thresholds", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     const exactSeat = await seedSeat({
       githubUsername: "exact-user",
@@ -278,13 +252,12 @@ describe("GET /api/seats/low-usage", () => {
     const response = await GET(request as never);
     expect(response.status).toBe(200);
     const json = await response.json();
-    expect(json.seats).toEqual([]);
-    expect(json.total).toBe(0);
+    expect(json.seats).toHaveLength(2);
+    expect(json.total).toBe(2);
   });
 
   it("includes active seats with zero usage (no usage records)", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     await seedSeat({
       githubUsername: "no-usage-user",
@@ -302,12 +275,11 @@ describe("GET /api/seats/low-usage", () => {
     expect(json.seats).toHaveLength(1);
     expect(json.seats[0].githubUsername).toBe("no-usage-user");
     expect(json.seats[0].totalRequests).toBe(0);
-    expect(json.seats[0].usagePercent).toBe(0);
+    expect(json.seats[0]).not.toHaveProperty("usagePercent");
   });
 
   it("returns correct response shape", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     const seat = await seedSeat({
       githubUsername: "shape-user",
@@ -334,7 +306,7 @@ describe("GET /api/seats/low-usage", () => {
     expect(json).toHaveProperty("page");
     expect(json).toHaveProperty("pageSize");
     expect(json).toHaveProperty("totalPages");
-    expect(json).toHaveProperty("premiumRequestsPerSeat");
+    expect(json).not.toHaveProperty("legacyRequestsPerSeat");
 
     const s = json.seats[0];
     expect(s).toHaveProperty("seatId");
@@ -343,7 +315,7 @@ describe("GET /api/seats/low-usage", () => {
     expect(s).toHaveProperty("lastName");
     expect(s).toHaveProperty("department");
     expect(s).toHaveProperty("totalRequests");
-    expect(s).toHaveProperty("usagePercent");
+    expect(s).not.toHaveProperty("usagePercent");
 
     expect(s.seatId).toBe(seat.id);
     expect(s.githubUsername).toBe("shape-user");
@@ -351,12 +323,11 @@ describe("GET /api/seats/low-usage", () => {
     expect(s.lastName).toBe("Test");
     expect(s.department).toBe("QA");
     expect(s.totalRequests).toBe(150);
-    expect(s.usagePercent).toBe(50);
+    expect(s).not.toHaveProperty("usagePercent");
   });
 
   it("paginates correctly", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     for (let i = 1; i <= 5; i++) {
       const seat = await seedSeat({
@@ -390,7 +361,6 @@ describe("GET /api/seats/low-usage", () => {
 
   it("sorts ascending by usagePercent by default", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     const seatA = await seedSeat({
       githubUsername: "medium-user",
@@ -434,7 +404,6 @@ describe("GET /api/seats/low-usage", () => {
 
   it("sorts descending when sortOrder=desc", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     const seatA = await seedSeat({
       githubUsername: "medium-user",
@@ -471,7 +440,6 @@ describe("GET /api/seats/low-usage", () => {
 
   it("sorts by githubUsername", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     await seedSeat({ githubUsername: "charlie", githubUserId: 3 });
     await seedSeat({ githubUsername: "alice", githubUserId: 1 });
@@ -489,7 +457,6 @@ describe("GET /api/seats/low-usage", () => {
 
   it("sorts by department", async () => {
     await seedAuthSession();
-    await seedConfiguration({ premiumRequestsPerSeat: 300 });
 
     await seedSeat({
       githubUsername: "user-z",

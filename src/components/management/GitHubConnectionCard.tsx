@@ -337,7 +337,7 @@ export default function GitHubConnectionCard() {
 
           <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
             <li>The GitHub App will be uninstalled from <strong>{data.entityName}</strong>.</li>
-            <li>Data collection (seat sync, usage collection) will stop immediately.</li>
+            <li>GitHub data sync will stop immediately.</li>
             <li>If you connect a different {entityLabel.toLowerCase()}, new data will be collected alongside the existing data.</li>
             <li>You will need to install the GitHub App on an {entityLabel.toLowerCase()} again to resume data collection.</li>
           </ul>

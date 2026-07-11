@@ -24,8 +24,8 @@ export default async function ManagementPage() {
       <div className="mx-auto max-w-5xl">
         <h1 className="text-2xl font-bold text-gray-900">Management</h1>
         <p className="mt-2 text-sm text-gray-600">
-          Configure the application, manage departments, teams, jobs, users, and
-          seats from a single place.
+          Configure the application, manage Usage Imports, departments, teams,
+          users, and seats from a single place.
         </p>
 
         <div className="mt-8">

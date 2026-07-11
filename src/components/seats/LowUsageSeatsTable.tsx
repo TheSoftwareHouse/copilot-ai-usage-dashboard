@@ -22,7 +22,6 @@ interface LowUsageSeatsResponse {
   page: number;
   pageSize: number;
   totalPages: number;
-  premiumRequestsPerSeat: number;
 }
 
 const PAGE_SIZE = 10;

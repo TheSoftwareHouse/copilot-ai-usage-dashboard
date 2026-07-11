@@ -92,158 +92,54 @@ describe("configurationSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts valid premiumRequestsPerSeat values", () => {
-    for (const value of [1, 300, 100000]) {
-      const result = configurationSchema.safeParse({
-        apiMode: "organisation",
-        entityName: "TestOrg",
-        premiumRequestsPerSeat: value,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it("rejects invalid premiumRequestsPerSeat values", () => {
-    for (const value of [0, -1, 1.5, 100001]) {
-      const result = configurationSchema.safeParse({
-        apiMode: "organisation",
-        entityName: "TestOrg",
-        premiumRequestsPerSeat: value,
-      });
-      expect(result.success).toBe(false);
-    }
-  });
-
-  it("rejects non-numeric premiumRequestsPerSeat", () => {
+  it("rejects the retired allowance field", () => {
     const result = configurationSchema.safeParse({
       apiMode: "organisation",
       entityName: "TestOrg",
-      premiumRequestsPerSeat: "abc",
+      legacyAllowance: 300,
     });
     expect(result.success).toBe(false);
-  });
-
-  it("accepts payload without premiumRequestsPerSeat (optional)", () => {
-    const result = configurationSchema.safeParse({
-      apiMode: "organisation",
-      entityName: "TestOrg",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.premiumRequestsPerSeat).toBeUndefined();
-    }
   });
 });
 
 describe("updateConfigurationSchema", () => {
-  it("accepts valid premiumRequestsPerSeat values", () => {
-    for (const value of [1, 300, 100000]) {
-      const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: value,
-      });
-      expect(result.success).toBe(true);
+  it("accepts valid threshold updates", () => {
+    const result = updateConfigurationSchema.safeParse({
+      deviationWarningThreshold: 175,
+      deviationAlertThreshold: 350,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.deviationWarningThreshold).toBe(175);
+      expect(result.data.deviationAlertThreshold).toBe(350);
     }
   });
 
-  it("rejects missing premiumRequestsPerSeat", () => {
+  it("rejects an empty payload", () => {
     const result = updateConfigurationSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 
-  it("rejects invalid premiumRequestsPerSeat values", () => {
-    for (const value of [0, -1, 1.5, 100001]) {
-      const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: value,
-      });
-      expect(result.success).toBe(false);
-    }
-  });
-
-  it("rejects non-numeric premiumRequestsPerSeat", () => {
-    const result = updateConfigurationSchema.safeParse({
-      premiumRequestsPerSeat: "abc",
-    });
+  it("rejects the retired allowance field", () => {
+    const result = updateConfigurationSchema.safeParse({ legacyAllowance: 300 });
     expect(result.success).toBe(false);
   });
 
-  it("ignores extra fields", () => {
-    const result = updateConfigurationSchema.safeParse({
-      apiMode: "organisation",
-      entityName: "TestOrg",
-      premiumRequestsPerSeat: 300,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("accepts valid normSeatsCount values", () => {
-    for (const value of [1, 30, 10000]) {
-      const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: 300,
-        normSeatsCount: value,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it("rejects invalid normSeatsCount values", () => {
-    for (const value of [0, -1, 1.5, 10001]) {
-      const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: 300,
-        normSeatsCount: value,
-      });
-      expect(result.success).toBe(false);
-    }
-  });
-
-  it("accepts valid deviationWarningThreshold values", () => {
-    for (const value of [1.01, 1.5, 99.99]) {
-      const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: 300,
-        deviationWarningThreshold: value,
-      });
-      expect(result.success).toBe(true);
-    }
-  });
-
   it("rejects invalid deviationWarningThreshold values", () => {
-    for (const value of [0, 1.0, 100, -1, 1.555]) {
+    for (const value of [0, 50000.01, -1, 1.555]) {
       const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: 300,
         deviationWarningThreshold: value,
       });
       expect(result.success).toBe(false);
-    }
-  });
-
-  it("accepts valid deviationAlertThreshold values", () => {
-    for (const value of [1.01, 2.0, 99.99]) {
-      const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: 300,
-        deviationAlertThreshold: value,
-      });
-      expect(result.success).toBe(true);
     }
   });
 
   it("rejects invalid deviationAlertThreshold values", () => {
-    for (const value of [0, 1.0, 100, -1, 2.555]) {
+    for (const value of [0, 50000.01, -1, 2.555]) {
       const result = updateConfigurationSchema.safeParse({
-        premiumRequestsPerSeat: 300,
         deviationAlertThreshold: value,
       });
       expect(result.success).toBe(false);
-    }
-  });
-
-  it("accepts payload without norm fields (fields are optional)", () => {
-    const result = updateConfigurationSchema.safeParse({
-      premiumRequestsPerSeat: 300,
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.normSeatsCount).toBeUndefined();
-      expect(result.data.deviationWarningThreshold).toBeUndefined();
-      expect(result.data.deviationAlertThreshold).toBeUndefined();
     }
   });
 });

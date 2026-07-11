@@ -122,7 +122,6 @@ describe("POST /api/github-app/install", () => {
     await configRepo.save({
       apiMode: ApiMode.ORGANISATION,
       entityName: "ExistingOrg",
-      premiumRequestsPerSeat: 300,
     });
 
     const response = await POST(makeRequest({ installationId: "55555" }));
@@ -187,7 +186,6 @@ describe("POST /api/github-app/install", () => {
     expect(config).not.toBeNull();
     expect(config!.apiMode).toBe("organisation");
     expect(config!.entityName).toBe("acme-corp");
-    expect(config!.premiumRequestsPerSeat).toBe(300);
   });
 
   it("updates GitHubApp installationId in DB", async () => {
@@ -396,7 +394,6 @@ describe("POST /api/github-app/install", () => {
       expect(config).not.toBeNull();
       expect(config!.apiMode).toBe("organisation");
       expect(config!.entityName).toBe("new-org");
-      expect(config!.premiumRequestsPerSeat).toBe(300);
     });
   });
 });

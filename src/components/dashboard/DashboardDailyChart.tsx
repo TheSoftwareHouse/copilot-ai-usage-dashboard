@@ -18,6 +18,7 @@ interface DashboardDailyChartProps {
   daysInMonth: number;
   month: number;
   year: number;
+  metricLabel: string;
   onBarClick?: (day: number, month: number, year: number) => void;
 }
 
@@ -73,6 +74,7 @@ export default function DashboardDailyChart({
   daysInMonth,
   month,
   year,
+  metricLabel,
   onBarClick,
 }: DashboardDailyChartProps) {
   const usageByDay = new Map(dailyUsage.map((d) => [d.day, d]));
@@ -106,8 +108,8 @@ export default function DashboardDailyChart({
       role="img"
       aria-label={
         hasPreviousData
-          ? "Daily premium requests bar chart comparing current and previous month"
-          : "Daily premium requests bar chart showing total requests per day"
+          ? `Daily ${metricLabel.toLowerCase()} bar chart comparing current and previous month`
+          : `Daily ${metricLabel.toLowerCase()} bar chart showing total requests per day`
       }
     >
       <ResponsiveContainer width="100%" height={300}>
@@ -171,7 +173,7 @@ export default function DashboardDailyChart({
             <Tooltip
               formatter={(value: number | undefined) => [
                 (value ?? 0).toLocaleString(),
-                "Total Requests",
+                metricLabel,
               ]}
               labelFormatter={(label) => `Day ${label}`}
             />

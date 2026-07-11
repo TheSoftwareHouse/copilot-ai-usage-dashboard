@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
@@ -24,15 +23,12 @@ export async function GET(request: NextRequest) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
-
     type RankingRow = {
       seatId: number;
       githubUsername: string;
       firstName: string | null;
       lastName: string | null;
       totalRequests: string;
-      usagePercent: string;
       rank_desc: string;
       rank_asc: string;
     };
@@ -59,18 +55,10 @@ export async function GET(request: NextRequest) {
            sr."firstName",
            sr."lastName",
            ROUND(sr.total_requests::numeric, 0) AS "totalRequests",
-           ROUND(
-             CASE WHEN $3 > 0
-               THEN sr.total_requests / $3 * 100
-               ELSE 0
-             END::numeric, 1
-           ) AS "usagePercent",
            ROW_NUMBER() OVER (ORDER BY
-             CASE WHEN $3 > 0 THEN sr.total_requests / $3 * 100 ELSE 0 END DESC,
              sr.total_requests DESC
            ) AS rank_desc,
            ROW_NUMBER() OVER (ORDER BY
-             CASE WHEN $3 > 0 THEN sr.total_requests / $3 * 100 ELSE 0 END ASC,
              sr.total_requests ASC
            ) AS rank_asc
          FROM seat_requests sr
@@ -78,7 +66,7 @@ export async function GET(request: NextRequest) {
        SELECT *
        FROM ranked
        WHERE rank_desc <= 5 OR rank_asc <= 5`,
-      [month, year, premiumRequestsPerSeat],
+      [month, year],
     );
 
     const mapRow = (row: RankingRow) => ({
@@ -87,7 +75,6 @@ export async function GET(request: NextRequest) {
       firstName: row.firstName,
       lastName: row.lastName,
       totalRequests: Number(row.totalRequests),
-      usagePercent: Number(row.usagePercent),
     });
 
     const mostActive = rows

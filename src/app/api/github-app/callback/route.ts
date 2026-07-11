@@ -5,6 +5,8 @@ import { encrypt } from "@/lib/encryption";
 import { githubAppCallbackSchema } from "@/lib/validations/github-app";
 import { handleRouteError, validateBody, isValidationError } from "@/lib/api-helpers";
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
   try {
     const dataSource = await getDb();

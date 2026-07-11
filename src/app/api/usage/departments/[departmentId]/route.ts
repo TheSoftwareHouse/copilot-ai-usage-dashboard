@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { DepartmentEntity } from "@/entities/department.entity";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
-import { calcUsagePercent } from "@/lib/usage-helpers";
+import { calculateUsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 type RouteContext = { params: Promise<{ departmentId: string }> };
 
@@ -37,7 +36,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
     const departmentRepo = dataSource.getRepository(DepartmentEntity);
 
     const department = await departmentRepo.findOne({ where: { id: departmentId } });
@@ -86,13 +84,68 @@ export async function GET(request: NextRequest, context: RouteContext) {
     // Department-level aggregates
     const memberCount = members.length;
     const totalRequests = members.reduce((sum, m) => sum + m.totalRequests, 0);
-    const cappedTotalRequests = members.reduce(
-      (sum, m) => sum + Math.min(m.totalRequests, premiumRequestsPerSeat), 0,
-    );
     const totalGrossAmount = members.reduce((sum, m) => sum + m.totalGrossAmount, 0);
-    const usagePercent = calcUsagePercent(cappedTotalRequests, memberCount * premiumRequestsPerSeat);
     const averageRequestsPerMember =
       memberCount > 0 ? totalRequests / memberCount : 0;
+
+    const dailyRows: {
+      seatId: number;
+      githubUsername: string;
+      day: number | null;
+      totalRequests: string;
+      totalGrossAmount: string;
+    }[] = await dataSource.query(
+      `SELECT
+         cs.id AS "seatId",
+         cs."githubUsername",
+         cu."day",
+         COALESCE(SUM((item->>'grossQuantity')::numeric), 0) AS "totalRequests",
+         COALESCE(SUM((item->>'grossAmount')::numeric), 0) AS "totalGrossAmount"
+       FROM copilot_seat cs
+       LEFT JOIN copilot_usage cu
+         ON cu."seatId" = cs.id AND cu.month = $2 AND cu.year = $3
+       LEFT JOIN LATERAL jsonb_array_elements(cu."usageItems") AS item ON true
+       WHERE cs."departmentId" = $1
+       GROUP BY cs.id, cs."githubUsername", cu."day"
+       ORDER BY cs.id, cu."day"`,
+      [departmentId, month, year],
+    );
+
+    const dailyMap = new Map<
+      number,
+      { seatId: number; githubUsername: string; days: { day: number; totalRequests: number }[] }
+    >();
+    const dailyGrossQuantity = new Map<number, number>();
+
+    for (const row of dailyRows) {
+      if (!dailyMap.has(row.seatId)) {
+        dailyMap.set(row.seatId, {
+          seatId: row.seatId,
+          githubUsername: row.githubUsername,
+          days: [],
+        });
+      }
+      if (row.day !== null) {
+        dailyMap.get(row.seatId)!.days.push({
+          day: row.day,
+          totalRequests: Number(row.totalRequests),
+        });
+        dailyGrossQuantity.set(
+          row.day,
+          (dailyGrossQuantity.get(row.day) ?? 0) + Number(row.totalRequests),
+        );
+      }
+    }
+
+    const dailyUsagePerMember = Array.from(dailyMap.values());
+    const costStats = calculateUsageCostMetrics({
+      month,
+      year,
+      dailyGrossQuantity: Array.from(dailyGrossQuantity, ([day, grossQuantity]) => ({
+        day,
+        grossQuantity,
+      })),
+    });
 
     return NextResponse.json({
       department: {
@@ -102,12 +155,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
         totalRequests,
         totalGrossAmount,
         averageRequestsPerMember,
-        usagePercent,
       },
       members,
+      dailyUsagePerMember,
+      costStats,
       month,
       year,
-      premiumRequestsPerSeat,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/usage/departments/[departmentId]");

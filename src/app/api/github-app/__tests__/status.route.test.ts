@@ -85,7 +85,6 @@ async function seedConfiguration() {
   await repo.save({
     apiMode: ApiMode.ORGANISATION,
     entityName: "acme-corp",
-    premiumRequestsPerSeat: 300,
   });
 }
 

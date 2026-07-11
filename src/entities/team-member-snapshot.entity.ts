@@ -6,6 +6,7 @@ export interface TeamMemberSnapshot {
   seatId: number;
   month: number;
   year: number;
+  allocationPercentage: number;
   createdAt: Date;
 }
 
@@ -29,6 +30,10 @@ export const TeamMemberSnapshotEntity = new EntitySchema<TeamMemberSnapshot>({
     },
     year: {
       type: "smallint",
+    },
+    allocationPercentage: {
+      type: "smallint",
+      default: 100,
     },
     createdAt: {
       type: "timestamptz",

@@ -319,6 +319,7 @@ describe("POST /api/teams/[id]/members/backfill", () => {
     expect(snapshots[0].month).toBe(1);
     expect(snapshots[1].month).toBe(2);
     expect(snapshots[2].month).toBe(3);
+    expect(snapshots.every((snapshot) => snapshot.allocationPercentage === 100)).toBe(true);
   });
 
   it("backfills multiple seats across range", async () => {

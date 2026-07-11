@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { DashboardMonthlySummaryEntity } from "@/entities/dashboard-monthly-summary.entity";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
-import { formatName } from "@/lib/format-helpers";
+import { getDashboardMetricMode, isAicReportingMonth } from "@/lib/aic-reporting";
+import { refreshDashboardMetrics } from "@/lib/dashboard-metrics";
+import { calculateUsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -29,43 +30,80 @@ export async function GET(request: NextRequest) {
     const summaryRepo = dataSource.getRepository(
       DashboardMonthlySummaryEntity,
     );
+    const metricMode = getDashboardMetricMode();
 
-    const summary = await summaryRepo.findOne({ where: { month, year } });
-    const premiumRequestsPerSeat = await getPremiumAllowance();
+    const monthlyUsageRows: { day: number; totalRequests: string; totalGrossQuantity: string }[] =
+      await dataSource.query(
+        `SELECT
+           cu."day",
+           COALESCE(SUM((item->>'grossQuantity')::numeric), 0) AS "totalRequests",
+           COALESCE(SUM((item->>'grossQuantity')::numeric), 0) AS "totalGrossQuantity"
+         FROM copilot_usage cu,
+              jsonb_array_elements(cu."usageItems") AS item
+         WHERE cu."month" = $1 AND cu."year" = $2
+         GROUP BY cu."day"
+         ORDER BY cu."day" ASC`,
+        [month, year],
+      );
+
+    const dailyGrossQuantity = monthlyUsageRows.map((row) => ({
+      day: row.day,
+      grossQuantity: Number(row.totalGrossQuantity),
+    }));
+
+    const costStats = calculateUsageCostMetrics({
+      month,
+      year,
+      dailyGrossQuantity,
+    });
+
+    let summary = await summaryRepo.findOne({ where: { month, year } });
+    let summaryState: "summary" | "rebuilt" | "pending" | "empty" =
+      summary ? "summary" : "empty";
+    const summaryWarnings: string[] = [];
+
+    if (!summary && metricMode === "aic" && isAicReportingMonth(month, year)) {
+      const rawUsageExistsRow: { hasRawUsage: boolean }[] = await dataSource.query(
+        `SELECT EXISTS(
+           SELECT 1
+           FROM copilot_usage cu
+           WHERE cu."month" = $1 AND cu."year" = $2
+         ) AS "hasRawUsage"`,
+        [month, year],
+      );
+
+      const hasRawUsage = Boolean(rawUsageExistsRow[0]?.hasRawUsage);
+
+      if (hasRawUsage) {
+        try {
+          await refreshDashboardMetrics(month, year);
+          summary = await summaryRepo.findOne({ where: { month, year } });
+
+          if (summary) {
+            summaryState = "rebuilt";
+          } else {
+            summaryState = "pending";
+            summaryWarnings.push(
+              `Dashboard summary rebuild for ${month}/${year} completed without materializing a summary row.`,
+            );
+          }
+        } catch (error) {
+          summaryState = "pending";
+          summaryWarnings.push(
+            `Dashboard summary rebuild failed for ${month}/${year}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+    }
 
     // Fetch previous month's summary for trend indicator
     const prevMonth = month === 1 ? 12 : month - 1;
     const prevYear = month === 1 ? year - 1 : year;
 
     if (summary) {
-      const includedPremiumRequests = summary.activeSeats * premiumRequestsPerSeat;
-      const includedPremiumRequestsUsed = summary.includedPremiumRequestsUsed;
-      const includedPremiumRequestsRemaining = Math.max(0, includedPremiumRequests - includedPremiumRequestsUsed);
-      const totalPremiumRequests = summary.totalPremiumRequests;
-      const paidPremiumRequests = Math.max(0, totalPremiumRequests - includedPremiumRequestsUsed);
-
-      const previousSummary = await summaryRepo.findOne({ where: { month: prevMonth, year: prevYear } });
-      const previousIncludedPremiumRequests = previousSummary
-        ? previousSummary.activeSeats * premiumRequestsPerSeat
-        : null;
-      const previousIncludedPremiumRequestsUsed = previousSummary
-        ? previousSummary.includedPremiumRequestsUsed
-        : null;
-
-      const dailyRows: { day: number; totalRequests: string }[] =
-        await dataSource.query(
-          `SELECT
-             cu."day",
-             SUM((item->>'grossQuantity')::numeric) AS "totalRequests"
-           FROM copilot_usage cu,
-                jsonb_array_elements(cu."usageItems") AS item
-           WHERE cu."month" = $1 AND cu."year" = $2
-           GROUP BY cu."day"
-           ORDER BY cu."day" ASC`,
-          [month, year],
-        );
-
-      const dailyUsage = dailyRows.map((row) => ({
+      const dailyUsage = monthlyUsageRows.map((row) => ({
         day: row.day,
         totalRequests: Number(row.totalRequests),
       }));
@@ -88,40 +126,10 @@ export async function GET(request: NextRequest) {
         totalRequests: Number(row.totalRequests),
       }));
 
-      const topDailySpendingRows: {
-        seatId: number;
-        githubUsername: string;
-        firstName: string | null;
-        lastName: string | null;
-        day: number;
-        totalSpending: string;
-      }[] = await dataSource.query(
-        `SELECT
-           cs."id" AS "seatId",
-           cs."githubUsername",
-           cs."firstName",
-           cs."lastName",
-           cu."day",
-           SUM((item->>'netAmount')::numeric) AS "totalSpending"
-         FROM copilot_usage cu
-           JOIN copilot_seat cs ON cu."seatId" = cs."id",
-           jsonb_array_elements(cu."usageItems") AS item
-         WHERE cu."month" = $1 AND cu."year" = $2
-         GROUP BY cs."id", cs."githubUsername", cs."firstName", cs."lastName", cu."day"
-         ORDER BY "totalSpending" DESC
-         LIMIT 10`,
-        [month, year],
-      );
-
-      const topDailySpendings = topDailySpendingRows.map((row) => ({
-        seatId: row.seatId,
-        githubUsername: row.githubUsername,
-        displayName: formatName(row.firstName, row.lastName, row.githubUsername),
-        day: row.day,
-        totalSpending: Number(row.totalSpending),
-      }));
-
       return NextResponse.json({
+        metricMode,
+        summaryState,
+        summaryWarnings,
         totalSeats: summary.totalSeats,
         activeSeats: summary.activeSeats,
         modelUsage: summary.modelUsage,
@@ -129,17 +137,11 @@ export async function GET(request: NextRequest) {
         leastActiveUsers: summary.leastActiveUsers,
         totalSpending: Number(summary.totalSpending),
         seatBaseCost: Number(summary.seatBaseCost),
-        includedPremiumRequests,
-        includedPremiumRequestsUsed,
-        includedPremiumRequestsRemaining,
-        totalPremiumRequests,
-        paidPremiumRequests,
-        premiumRequestsPerSeat,
-        previousIncludedPremiumRequests,
-        previousIncludedPremiumRequestsUsed,
+        totalAiCredits: summary.totalAiCredits,
         dailyUsage,
+        dailyGrossUsage: dailyGrossQuantity,
+        costStats,
         previousDailyUsage,
-        topDailySpendings,
         month,
         year,
       });
@@ -147,6 +149,9 @@ export async function GET(request: NextRequest) {
 
     // Empty state — no data for the requested month/year
     return NextResponse.json({
+      metricMode,
+      summaryState,
+      summaryWarnings,
       totalSeats: 0,
       activeSeats: 0,
       modelUsage: [],
@@ -154,17 +159,11 @@ export async function GET(request: NextRequest) {
       leastActiveUsers: [],
       totalSpending: 0,
       seatBaseCost: 0,
-      includedPremiumRequests: 0,
-      includedPremiumRequestsUsed: 0,
-      includedPremiumRequestsRemaining: 0,
-      totalPremiumRequests: 0,
-      paidPremiumRequests: 0,
-      premiumRequestsPerSeat,
-      previousIncludedPremiumRequests: null,
-      previousIncludedPremiumRequestsUsed: null,
+      totalAiCredits: 0,
       dailyUsage: [],
+      dailyGrossUsage: dailyGrossQuantity,
+      costStats,
       previousDailyUsage: [],
-      topDailySpendings: [],
       month,
       year,
     });

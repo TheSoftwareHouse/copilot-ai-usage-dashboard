@@ -4,16 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import {
   JobCard,
   SyncNowButton,
-  CollectNowButton,
   type JobExecutionData,
 } from "@/components/settings/JobStatusPanel";
-import Modal from "@/components/shared/Modal";
-import MonthRecollectionPanel from "@/components/settings/MonthRecollectionPanel";
 
 interface SeatJobStatusData {
   seatSync: JobExecutionData | null;
-  usageCollection: JobExecutionData | null;
-  monthRecollection: JobExecutionData | null;
 }
 
 function serializeExecution(
@@ -22,6 +17,7 @@ function serializeExecution(
   if (!raw) return null;
   return {
     status: raw.status as string,
+    reason: raw.reason ? String(raw.reason) : null,
     startedAt: String(raw.startedAt),
     completedAt: raw.completedAt ? String(raw.completedAt) : null,
     errorMessage: raw.errorMessage ? String(raw.errorMessage) : null,
@@ -34,7 +30,6 @@ export default function SeatJobStatusCards() {
   const [data, setData] = useState<SeatJobStatusData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const fetchJobStatus = useCallback(async (silent = false) => {
     if (!silent) {
@@ -51,18 +46,16 @@ export default function SeatJobStatusCards() {
       }
 
       if (!response.ok) {
-        throw new Error(`Failed to load job status (${response.status})`);
+        throw new Error(`Failed to load seat sync status (${response.status})`);
       }
 
       const json = await response.json();
       setData({
         seatSync: serializeExecution(json.seatSync),
-        usageCollection: serializeExecution(json.usageCollection),
-        monthRecollection: serializeExecution(json.monthRecollection),
       });
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to load job status",
+        err instanceof Error ? err.message : "Failed to load seat sync status",
       );
     } finally {
       setIsLoading(false);
@@ -75,7 +68,10 @@ export default function SeatJobStatusCards() {
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2" aria-label="Job status loading">
+      <div
+        className="grid gap-4 sm:grid-cols-2"
+        aria-label="Seat sync status loading"
+      >
         <div className="h-32 animate-pulse rounded-lg border border-gray-200 bg-gray-100" />
         <div className="h-32 animate-pulse rounded-lg border border-gray-200 bg-gray-100" />
       </div>
@@ -100,41 +96,12 @@ export default function SeatJobStatusCards() {
   const handleActionComplete = () => fetchJobStatus(true);
 
   return (
-    <>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <JobCard
-          title="Seat Sync"
-          execution={data.seatSync}
-          action={<SyncNowButton onComplete={handleActionComplete} />}
-        />
-        <JobCard
-          title="Usage Collection"
-          execution={data.usageCollection}
-          action={
-            <>
-              <CollectNowButton onComplete={handleActionComplete} />
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(true)}
-                className="inline-flex items-center rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-              >
-                Collect Specific Month
-              </button>
-            </>
-          }
-        />
-      </div>
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Month Data Recollection"
-      >
-        <MonthRecollectionPanel
-          hideHeading
-          lastJobStatus={data.monthRecollection?.status ?? null}
-          onComplete={handleActionComplete}
-        />
-      </Modal>
-    </>
+    <div className="grid gap-4 sm:grid-cols-2">
+      <JobCard
+        title="Seat Sync"
+        execution={data.seatSync}
+        action={<SyncNowButton onComplete={handleActionComplete} />}
+      />
+    </div>
   );
 }

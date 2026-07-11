@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError } from "@/lib/api-helpers";
-import { calcUsagePercent } from "@/lib/usage-helpers";
 
 export const dynamic = "force-dynamic";
 
@@ -25,14 +23,11 @@ export async function GET(request: NextRequest) {
     if (isNaN(year) || year < 2020) year = defaultYear;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
-
     const rows: {
       departmentId: number;
       departmentName: string;
       memberCount: string;
       totalRequests: string;
-      cappedTotalRequests: string;
       totalGrossAmount: string;
     }[] = await dataSource.query(
       `WITH department_seats AS (
@@ -57,7 +52,6 @@ export async function GET(request: NextRequest) {
            su."departmentId",
            COUNT(DISTINCT su."seatId") AS "memberCount",
            COALESCE(SUM(su.requests), 0) AS "totalRequests",
-           COALESCE(SUM(LEAST(su.requests, $3)), 0) AS "cappedTotalRequests",
            COALESCE(SUM(su."grossAmount"), 0) AS "totalGrossAmount"
          FROM seat_usage su
          GROUP BY su."departmentId"
@@ -67,23 +61,18 @@ export async function GET(request: NextRequest) {
          d.name AS "departmentName",
          COALESCE(da."memberCount", 0)::int AS "memberCount",
          COALESCE(da."totalRequests", 0) AS "totalRequests",
-         COALESCE(da."cappedTotalRequests", 0) AS "cappedTotalRequests",
          COALESCE(da."totalGrossAmount", 0) AS "totalGrossAmount"
        FROM department d
        LEFT JOIN dept_aggregates da ON da."departmentId" = d.id
        ORDER BY
-         CASE WHEN COALESCE(da."memberCount", 0) = 0 THEN 0
-              ELSE COALESCE(da."cappedTotalRequests", 0) / (COALESCE(da."memberCount", 0) * $3)
-         END DESC`,
-      [month, year, premiumRequestsPerSeat],
+        COALESCE(da."totalRequests", 0) DESC`,
+      [month, year],
     );
 
     const departments = rows.map((row) => {
       const memberCount = Number(row.memberCount);
       const totalRequests = Number(row.totalRequests);
-      const cappedTotalRequests = Number(row.cappedTotalRequests);
       const totalGrossAmount = Number(row.totalGrossAmount);
-      const usagePercent = calcUsagePercent(cappedTotalRequests, memberCount * premiumRequestsPerSeat);
       const averageRequestsPerMember =
         memberCount > 0 ? totalRequests / memberCount : 0;
       return {
@@ -93,7 +82,6 @@ export async function GET(request: NextRequest) {
         totalRequests,
         totalGrossAmount,
         averageRequestsPerMember,
-        usagePercent,
       };
     });
 
@@ -102,7 +90,6 @@ export async function GET(request: NextRequest) {
       total: departments.length,
       month,
       year,
-      premiumRequestsPerSeat,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/usage/departments");

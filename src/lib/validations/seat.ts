@@ -36,3 +36,24 @@ export const updateSeatSchema = z
   );
 
 export type UpdateSeatInput = z.infer<typeof updateSeatSchema>;
+
+export const seatModelDailyUsageQuerySchema = z.object({
+  modelName: z.string().trim().min(1).max(255),
+  month: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(12)
+    .optional()
+    .default(() => new Date().getUTCMonth() + 1),
+  year: z.coerce
+    .number()
+    .int()
+    .min(2020)
+    .optional()
+    .default(() => new Date().getUTCFullYear()),
+});
+
+export type SeatModelDailyUsageQueryInput = z.infer<
+  typeof seatModelDailyUsageQuerySchema
+>;

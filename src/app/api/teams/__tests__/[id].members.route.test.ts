@@ -86,12 +86,16 @@ function makePostRequest(
   id: number | string,
   body?: unknown,
 ): [Request, { params: Promise<{ id: string }> }] {
+  const payload =
+    body && typeof body === "object" && !Array.isArray(body)
+      ? { month: currentMonth, year: currentYear, ...(body as Record<string, unknown>) }
+      : body;
   const request = new Request(
     `http://localhost:3000/api/teams/${id}/members`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: payload !== undefined ? JSON.stringify(payload) : undefined,
     },
   );
   return [request, { params: Promise.resolve({ id: String(id) }) }];
@@ -101,12 +105,16 @@ function makeDeleteRequest(
   id: number | string,
   body?: unknown,
 ): [Request, { params: Promise<{ id: string }> }] {
+  const payload =
+    body && typeof body === "object" && !Array.isArray(body)
+      ? { month: currentMonth, year: currentYear, ...(body as Record<string, unknown>) }
+      : body;
   const request = new Request(
     `http://localhost:3000/api/teams/${id}/members`,
     {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: payload !== undefined ? JSON.stringify(payload) : undefined,
     },
   );
   return [request, { params: Promise.resolve({ id: String(id) }) }];
@@ -194,8 +202,8 @@ describe("GET /api/teams/[id]/members", () => {
 
     const snapshotRepo = testDs.getRepository(TeamMemberSnapshotEntity);
     await snapshotRepo.save([
-      { teamId: team.id, seatId: seatB.id, month: currentMonth, year: currentYear },
-      { teamId: team.id, seatId: seatA.id, month: currentMonth, year: currentYear },
+      { teamId: team.id, seatId: seatB.id, month: currentMonth, year: currentYear, allocationPercentage: 100 },
+      { teamId: team.id, seatId: seatA.id, month: currentMonth, year: currentYear, allocationPercentage: 60 },
     ]);
 
     const [req, ctx] = makeGetRequest(team.id);
@@ -209,6 +217,8 @@ describe("GET /api/teams/[id]/members", () => {
     expect(json.members[0]).toHaveProperty("firstName");
     expect(json.members[0]).toHaveProperty("lastName");
     expect(json.members[0]).toHaveProperty("status");
+    expect(json.members[0].allocationPercentage).toBe(60);
+    expect(json.members[1].allocationPercentage).toBe(100);
   });
 });
 
@@ -335,6 +345,29 @@ describe("POST /api/teams/[id]/members", () => {
       where: { teamId: team.id, month: currentMonth, year: currentYear },
     });
     expect(snapshots).toHaveLength(2);
+    expect(snapshots.every((snapshot) => snapshot.allocationPercentage === 100)).toBe(true);
+  });
+
+  it("applies a custom allocation percentage to all added snapshots", async () => {
+    await seedAuthSession();
+    const team = await createTeam("Team");
+    const seat = await createSeat("user1", 3001);
+
+    const [req, ctx] = makePostRequest(team.id, {
+      seatIds: [seat.id],
+      allocationPercentage: 60,
+    });
+    const response = await POST(req, ctx);
+    expect(response.status).toBe(201);
+    const json = await response.json();
+    expect(json.allocationPercentage).toBe(60);
+    expect(json.allocationWarnings).toEqual([]);
+
+    const snapshotRepo = testDs.getRepository(TeamMemberSnapshotEntity);
+    const snapshot = await snapshotRepo.findOne({
+      where: { teamId: team.id, seatId: seat.id, month: currentMonth, year: currentYear },
+    });
+    expect(snapshot?.allocationPercentage).toBe(60);
   });
 
   it("ignores duplicate assignments (idempotent)", async () => {
@@ -732,7 +765,7 @@ describe("DELETE /api/teams/[id]/members (purge mode)", () => {
     expect(json.removed).toBe(1);
     expect(json.month).toBe(currentMonth);
     expect(json.year).toBe(currentYear);
-    expect(json.mode).toBeUndefined();
+    expect(json.mode).toBe("retire");
 
     // Historical snapshot should remain
     const historicalSnapshots = await snapshotRepo.find({

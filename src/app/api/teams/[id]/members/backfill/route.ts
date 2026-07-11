@@ -4,8 +4,15 @@ import { TeamEntity } from "@/entities/team.entity";
 import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
 import { teamMembersBackfillSchema } from "@/lib/validations/team-members";
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
-import { parseEntityId, parseJsonBody, isJsonParseError, invalidIdResponse, handleRouteError } from "@/lib/api-helpers";
+import {
+  parseEntityId,
+  invalidIdResponse,
+  handleRouteError,
+  validateBody,
+  isValidationError,
+} from "@/lib/api-helpers";
 import { IsNull, In } from "typeorm";
+import { DEFAULT_ALLOCATION_PERCENTAGE } from "@/lib/team-allocation";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -39,21 +46,10 @@ export async function POST(request: Request, context: RouteContext) {
     return invalidIdResponse("team");
   }
 
-  const body = await parseJsonBody(request);
-  if (isJsonParseError(body)) return body;
+  const parsed = await validateBody(request, teamMembersBackfillSchema);
+  if (isValidationError(parsed)) return parsed;
 
-  const result = teamMembersBackfillSchema.safeParse(body);
-  if (!result.success) {
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: result.error.flatten().fieldErrors,
-      },
-      { status: 400 },
-    );
-  }
-
-  const { seatIds, startMonth, startYear, endMonth, endYear } = result.data;
+  const { seatIds, startMonth, startYear, endMonth, endYear } = parsed.data;
 
   try {
     const dataSource = await getDb();
@@ -90,15 +86,17 @@ export async function POST(request: Request, context: RouteContext) {
     const monthRange = generateMonthRange(startMonth, startYear, endMonth, endYear);
     const totalMonthsInRange = monthRange.length;
 
-    // Build bulk INSERT values: (teamId, seatId, month, year) for each seat × month
-    // Params layout: $1 = teamId, then pairs of (seatId, month, year) per combination
+    // Build bulk INSERT values: (teamId, seatId, month, year, allocationPercentage)
+    // Params layout: $1 = teamId, then triplets of (seatId, month, year) per combination.
     const valueParts: string[] = [];
     const params: (number)[] = [id];
     let paramIdx = 2;
 
     for (const { month, year } of monthRange) {
       for (const seatId of seatIds) {
-        valueParts.push(`($1, $${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2})`);
+        valueParts.push(
+          `($1, $${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, ${DEFAULT_ALLOCATION_PERCENTAGE})`,
+        );
         params.push(seatId, month, year);
         paramIdx += 3;
       }
@@ -122,7 +120,7 @@ export async function POST(request: Request, context: RouteContext) {
     const beforeCount = parseInt(existingCountResult[0].count, 10);
 
     await dataSource.query(
-      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year")
+      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year", "allocationPercentage")
        VALUES ${valueParts.join(", ")}
        ON CONFLICT ON CONSTRAINT "UQ_team_member_snapshot" DO NOTHING`,
       params,

@@ -3,14 +3,51 @@ import { getDb } from "@/lib/db";
 import { TeamEntity } from "@/entities/team.entity";
 import { TeamMemberSnapshotEntity } from "@/entities/team-member-snapshot.entity";
 import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
-import { teamMembersSeatIdsSchema, teamMembersRemoveSchema } from "@/lib/validations/team-members";
+import {
+  createTeamMembersSchema,
+  teamMembersQuerySchema,
+  teamMembersRemoveSchema,
+} from "@/lib/validations/team-members";
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
-import { parseEntityId, getCurrentMonthYear, parseJsonBody, isJsonParseError, invalidIdResponse, handleRouteError } from "@/lib/api-helpers";
+import {
+  parseEntityId,
+  getCurrentMonthYear,
+  invalidIdResponse,
+  handleRouteError,
+  validateBody,
+  isValidationError,
+} from "@/lib/api-helpers";
 import { IsNull, In } from "typeorm";
+import {
+  getAllocationWarningsForSeats,
+  normalizeAllocationPercentage,
+} from "@/lib/team-allocation";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, context: RouteContext) {
+async function ensureActiveTeamExists(id: number) {
+  const dataSource = await getDb();
+  const teamRepo = dataSource.getRepository(TeamEntity);
+  const team = await teamRepo.findOne({
+    where: { id, deletedAt: IsNull() },
+  });
+
+  return { dataSource, team };
+}
+
+async function validateSeatIds(
+  seatRepo: ReturnType<(typeof import("typeorm"))["DataSource"]["prototype"]["getRepository"]>,
+  seatIds: number[],
+): Promise<number[]> {
+  const existingSeats = await seatRepo.find({
+    where: { id: In(seatIds) },
+    select: { id: true },
+  });
+  const existingIds = new Set(existingSeats.map((seat) => seat.id));
+  return seatIds.filter((seatId) => !existingIds.has(seatId));
+}
+
+export async function GET(request: Request, context: RouteContext) {
   const auth = await requireAdmin();
   if (isAuthFailure(auth)) return auth;
 
@@ -20,13 +57,27 @@ export async function GET(_request: Request, context: RouteContext) {
     return invalidIdResponse("team");
   }
 
-  try {
-    const dataSource = await getDb();
-    const teamRepo = dataSource.getRepository(TeamEntity);
+  const currentMonthYear = getCurrentMonthYear();
+  const url = new URL(request.url);
+  const parsedQuery = teamMembersQuerySchema.safeParse({
+    month: url.searchParams.get("month") ?? undefined,
+    year: url.searchParams.get("year") ?? undefined,
+  });
+  if (!parsedQuery.success) {
+    return NextResponse.json(
+      {
+        error: "Validation failed",
+        details: parsedQuery.error.flatten().fieldErrors,
+      },
+      { status: 400 },
+    );
+  }
 
-    const team = await teamRepo.findOne({
-      where: { id, deletedAt: IsNull() },
-    });
+  const month = parsedQuery.data.month ?? currentMonthYear.month;
+  const year = parsedQuery.data.year ?? currentMonthYear.year;
+
+  try {
+    const { dataSource, team } = await ensureActiveTeamExists(id);
     if (!team) {
       return NextResponse.json(
         { error: "Team not found" },
@@ -34,21 +85,21 @@ export async function GET(_request: Request, context: RouteContext) {
       );
     }
 
-    const { month, year } = getCurrentMonthYear();
-
     const rows: {
       seatId: number;
       githubUsername: string;
       firstName: string | null;
       lastName: string | null;
       status: string;
+      allocationPercentage: number;
     }[] = await dataSource.query(
       `SELECT
          tms."seatId",
          cs."githubUsername",
          cs."firstName",
          cs."lastName",
-         cs."status"
+         cs."status",
+         tms."allocationPercentage"
        FROM team_member_snapshot tms
        JOIN copilot_seat cs ON cs.id = tms."seatId"
        WHERE tms."teamId" = $1 AND tms.month = $2 AND tms.year = $3
@@ -63,6 +114,7 @@ export async function GET(_request: Request, context: RouteContext) {
         firstName: r.firstName,
         lastName: r.lastName,
         status: r.status,
+        allocationPercentage: r.allocationPercentage,
       })),
       month,
       year,
@@ -82,29 +134,21 @@ export async function POST(request: Request, context: RouteContext) {
     return invalidIdResponse("team");
   }
 
-  const body = await parseJsonBody(request);
-  if (isJsonParseError(body)) return body;
+  const parsed = await validateBody(request, createTeamMembersSchema);
+  if (isValidationError(parsed)) return parsed;
 
-  const result = teamMembersSeatIdsSchema.safeParse(body);
-  if (!result.success) {
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: result.error.flatten().fieldErrors,
-      },
-      { status: 400 },
-    );
-  }
-
-  const { seatIds } = result.data;
+  const {
+    seatIds,
+    month,
+    year,
+    allocationPercentage: requestedAllocationPercentage,
+  } = parsed.data;
+  const allocationPercentage = normalizeAllocationPercentage(
+    requestedAllocationPercentage,
+  );
 
   try {
-    const dataSource = await getDb();
-    const teamRepo = dataSource.getRepository(TeamEntity);
-
-    const team = await teamRepo.findOne({
-      where: { id, deletedAt: IsNull() },
-    });
+    const { dataSource, team } = await ensureActiveTeamExists(id);
     if (!team) {
       return NextResponse.json(
         { error: "Team not found" },
@@ -114,12 +158,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     // Validate that all seatIds exist
     const seatRepo = dataSource.getRepository(CopilotSeatEntity);
-    const existingSeats = await seatRepo.find({
-      where: { id: In(seatIds) },
-      select: { id: true },
-    });
-    const existingIds = new Set(existingSeats.map((s) => s.id));
-    const invalidIds = seatIds.filter((sid) => !existingIds.has(sid));
+    const invalidIds = await validateSeatIds(seatRepo, seatIds);
     if (invalidIds.length > 0) {
       return NextResponse.json(
         {
@@ -130,8 +169,6 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
-    const { month, year } = getCurrentMonthYear();
-
     // Count existing snapshots before insert so we can calculate how many were actually added
     const snapshotRepo = dataSource.getRepository(TeamMemberSnapshotEntity);
     const existingCount = await snapshotRepo.count({
@@ -140,13 +177,13 @@ export async function POST(request: Request, context: RouteContext) {
 
     // Use raw query with ON CONFLICT DO NOTHING for idempotent inserts
     const values = seatIds
-      .map((_, i) => `($1, $${i + 4}, $2, $3)`)
+      .map((_, i) => `($1, $${i + 5}, $2, $3, $4)`)
       .join(", ");
 
-    const params = [id, month, year, ...seatIds];
+    const params = [id, month, year, allocationPercentage, ...seatIds];
 
     await dataSource.query(
-      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year")
+      `INSERT INTO team_member_snapshot ("teamId", "seatId", "month", "year", "allocationPercentage")
        VALUES ${values}
        ON CONFLICT ON CONSTRAINT "UQ_team_member_snapshot" DO NOTHING`,
       params,
@@ -156,8 +193,17 @@ export async function POST(request: Request, context: RouteContext) {
       where: { teamId: id, month, year },
     });
     const added = newCount - existingCount;
+    const allocationWarnings = await getAllocationWarningsForSeats(
+      dataSource,
+      seatIds,
+      month,
+      year,
+    );
 
-    return NextResponse.json({ added, month, year }, { status: 201 });
+    return NextResponse.json(
+      { added, month, year, allocationPercentage, allocationWarnings },
+      { status: 201 },
+    );
   } catch (error) {
     return handleRouteError(error, "POST /api/teams/[id]/members");
   }
@@ -173,29 +219,13 @@ export async function DELETE(request: Request, context: RouteContext) {
     return invalidIdResponse("team");
   }
 
-  const body = await parseJsonBody(request);
-  if (isJsonParseError(body)) return body;
+  const parsed = await validateBody(request, teamMembersRemoveSchema);
+  if (isValidationError(parsed)) return parsed;
 
-  const result = teamMembersRemoveSchema.safeParse(body);
-  if (!result.success) {
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: result.error.flatten().fieldErrors,
-      },
-      { status: 400 },
-    );
-  }
-
-  const { seatIds, mode } = result.data;
+  const { seatIds, month, year, mode } = parsed.data;
 
   try {
-    const dataSource = await getDb();
-    const teamRepo = dataSource.getRepository(TeamEntity);
-
-    const team = await teamRepo.findOne({
-      where: { id, deletedAt: IsNull() },
-    });
+    const { dataSource, team } = await ensureActiveTeamExists(id);
     if (!team) {
       return NextResponse.json(
         { error: "Team not found" },
@@ -218,10 +248,10 @@ export async function DELETE(request: Request, context: RouteContext) {
       return NextResponse.json({
         removed: deleteResult.affected ?? 0,
         mode: "purge",
+        month,
+        year,
       });
     }
-
-    const { month, year } = getCurrentMonthYear();
 
     const deleteResult = await snapshotRepo
       .createQueryBuilder()
@@ -236,6 +266,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
     return NextResponse.json({
       removed: deleteResult.affected ?? 0,
+      mode,
       month,
       year,
     });

@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db";
 import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
 import { SeatStatus } from "@/entities/enums";
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
+import { calculateNorm, calculateSeatDeviation } from "@/lib/norm-calculation";
 import { handleRouteError, escapeLikePattern } from "@/lib/api-helpers";
 import type { FindOptionsWhere, FindOptionsOrder } from "typeorm";
 import type { CopilotSeat } from "@/entities/copilot-seat.entity";
@@ -89,9 +89,13 @@ export async function GET(request: NextRequest) {
       [sortBy]: sortOrder,
     };
 
+    const now = new Date();
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentYear = now.getUTCFullYear();
+
     const dataSource = await getDb();
     const seatRepo = dataSource.getRepository(CopilotSeatEntity);
-    const premiumRequestsPerSeat = await getPremiumAllowance();
+    const norm = await calculateNorm(currentMonth, currentYear);
 
     const [seats, total] = await seatRepo.findAndCount({
       where,
@@ -102,13 +106,10 @@ export async function GET(request: NextRequest) {
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-    // Aggregate current-month premium request totals for the returned seats
-    const now = new Date();
-    const currentMonth = now.getUTCMonth() + 1;
-    const currentYear = now.getUTCFullYear();
-
+    // Aggregate current-month AIC totals for the returned seats
     const seatIds = seats.map((s) => s.id);
     let usageMap = new Map<number, number>();
+    let peakMap = new Map<number, { peakDay: number; peakDailyRequests: number }>();
 
     if (seatIds.length > 0) {
       const usageRows: { seatId: number; totalRequests: string }[] =
@@ -127,26 +128,69 @@ export async function GET(request: NextRequest) {
       usageMap = new Map(
         usageRows.map((r) => [r.seatId, Number(r.totalRequests)]),
       );
+
+      const peakRows: { seatId: number; peakDay: number; peakDailyRequests: string }[] =
+        await dataSource.query(
+          `SELECT DISTINCT ON (sub."seatId")
+             sub."seatId",
+             sub."day" AS "peakDay",
+             sub."totalRequests" AS "peakDailyRequests"
+           FROM (
+             SELECT cu."seatId", cu."day",
+                    SUM((item->>'grossQuantity')::numeric) AS "totalRequests"
+             FROM copilot_usage cu,
+                  jsonb_array_elements(cu."usageItems") AS item
+             WHERE cu.month = $1 AND cu.year = $2
+               AND cu."seatId" = ANY($3)
+             GROUP BY cu."seatId", cu."day"
+           ) sub
+           ORDER BY sub."seatId", sub."totalRequests" DESC`,
+          [currentMonth, currentYear, seatIds],
+        );
+
+      peakMap = new Map(
+        peakRows.map((row) => [
+          row.seatId,
+          {
+            peakDay: row.peakDay,
+            peakDailyRequests: Number(row.peakDailyRequests),
+          },
+        ]),
+      );
     }
 
     return NextResponse.json({
-      seats: seats.map((s) => ({
-        id: s.id,
-        githubUsername: s.githubUsername,
-        status: s.status,
-        firstName: s.firstName,
-        lastName: s.lastName,
-        department: s.department,
-        departmentId: s.departmentId,
-        lastActivityAt: s.lastActivityAt,
-        createdAt: s.createdAt,
-        totalPremiumRequests: usageMap.get(s.id) ?? 0,
-      })),
+      seats: seats.map((s) => {
+        const peak = peakMap.get(s.id);
+        const deviation = calculateSeatDeviation(
+          peak?.peakDailyRequests ?? null,
+          peak?.peakDay ?? null,
+          norm.normValue,
+          norm.warningThreshold,
+          norm.alertThreshold,
+        );
+
+        return {
+          id: s.id,
+          githubUsername: s.githubUsername,
+          status: s.status,
+          firstName: s.firstName,
+          lastName: s.lastName,
+          department: s.department,
+          departmentId: s.departmentId,
+          lastActivityAt: s.lastActivityAt,
+          createdAt: s.createdAt,
+          totalAiCredits: usageMap.get(s.id) ?? 0,
+          deviationLevel: deviation.deviationLevel,
+          peakMultiplier: deviation.peakMultiplier,
+          peakDay: deviation.peakDay,
+          normValue: norm.normValue,
+        };
+      }),
       total,
       page,
       pageSize,
       totalPages,
-      premiumRequestsPerSeat,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/seats");

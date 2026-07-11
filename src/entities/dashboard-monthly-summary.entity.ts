@@ -23,8 +23,7 @@ export interface DashboardMonthlySummary {
   activeSeats: number;
   totalSpending: number;
   seatBaseCost: number;
-  totalPremiumRequests: number;
-  includedPremiumRequestsUsed: number;
+  totalAiCredits: number;
   modelUsage: ModelUsageEntry[];
   mostActiveUsers: UserActivityEntry[];
   leastActiveUsers: UserActivityEntry[];
@@ -68,11 +67,7 @@ export const DashboardMonthlySummaryEntity =
         scale: 4,
         default: 0,
       },
-      totalPremiumRequests: {
-        type: "int",
-        default: 0,
-      },
-      includedPremiumRequestsUsed: {
+      totalAiCredits: {
         type: "int",
         default: 0,
       },

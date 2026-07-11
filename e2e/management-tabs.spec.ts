@@ -47,6 +47,8 @@ test.describe("Management Tabs", () => {
       page.getByRole("tab", { name: /seats/i, selected: true })
     ).toBeVisible();
 
+    await expect(page.getByRole("tab", { name: /usage imports/i })).toBeVisible();
+
     // Seats tab panel is visible
     await expect(
       page.getByRole("tabpanel", { name: /seats/i })
@@ -77,6 +79,16 @@ test.describe("Management Tabs", () => {
     ).toBeVisible();
     await expect(
       page.getByRole("tabpanel", { name: /project teams/i })
+    ).toBeVisible();
+
+    // Click Usage Imports tab
+    await page.getByRole("tab", { name: /usage imports/i }).click();
+    await expect(page).toHaveURL(/\?tab=usage-imports/);
+    await expect(
+      page.getByRole("tab", { name: /usage imports/i, selected: true })
+    ).toBeVisible();
+    await expect(
+      page.getByRole("tabpanel", { name: /usage imports/i })
     ).toBeVisible();
 
     // Click Users tab
@@ -132,6 +144,20 @@ test.describe("Management Tabs", () => {
     ).toBeVisible();
     await expect(
       page.getByRole("tabpanel", { name: /project teams/i })
+    ).toBeVisible();
+  });
+
+  test("navigating directly to /management?tab=usage-imports shows Usage Imports tab active", async ({
+    page,
+  }) => {
+    await loginViaApi(page, "admin", "password123");
+    await page.goto("/management?tab=usage-imports");
+
+    await expect(
+      page.getByRole("tab", { name: /usage imports/i, selected: true })
+    ).toBeVisible();
+    await expect(
+      page.getByRole("tabpanel", { name: /usage imports/i })
     ).toBeVisible();
   });
 

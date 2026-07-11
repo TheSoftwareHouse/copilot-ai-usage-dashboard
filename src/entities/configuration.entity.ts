@@ -6,8 +6,6 @@ export interface Configuration {
   singletonKey: string;
   apiMode: ApiMode;
   entityName: string;
-  premiumRequestsPerSeat: number;
-  telemetryApiKey: string | null;
   normSeatsCount: number;
   deviationWarningThreshold: number;
   deviationAlertThreshold: number;
@@ -33,20 +31,13 @@ export const ConfigurationEntity = new EntitySchema<Configuration>({
     apiMode: {
       type: "enum",
       enum: ApiMode,
+      default: ApiMode.ORGANISATION,
+      nullable: true,
     },
     entityName: {
       type: "varchar",
       length: 255,
-    },
-    premiumRequestsPerSeat: {
-      type: "int",
-      default: 300,
-    },
-    telemetryApiKey: {
-      type: "varchar",
-      length: 255,
       nullable: true,
-      default: null,
     },
     normSeatsCount: {
       type: "int",
@@ -54,15 +45,15 @@ export const ConfigurationEntity = new EntitySchema<Configuration>({
     },
     deviationWarningThreshold: {
       type: "decimal",
-      precision: 5,
+      precision: 7,
       scale: 2,
-      default: 1.5,
+      default: 500,
     },
     deviationAlertThreshold: {
       type: "decimal",
-      precision: 5,
+      precision: 7,
       scale: 2,
-      default: 2.0,
+      default: 1000,
     },
     createdAt: {
       type: "timestamptz",

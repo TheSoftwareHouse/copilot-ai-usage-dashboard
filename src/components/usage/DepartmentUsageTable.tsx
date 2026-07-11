@@ -5,8 +5,15 @@ import Link from "next/link";
 import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
 import type { DepartmentUsageEntry } from "@/components/usage/DepartmentUsagePanel";
+import { formatCurrency } from "@/lib/format-helpers";
+import { isAicReportingMonth } from "@/lib/aic-reporting";
 
-type SortField = "departmentName" | "averageRequestsPerMember" | "usagePercent";
+type SortField =
+  | "departmentName"
+  | "totalRequests"
+  | "totalGrossAmount"
+  | "averageRequestsPerMember"
+  | "usagePercent";
 
 interface DepartmentUsageTableProps {
   departments: DepartmentUsageEntry[];
@@ -19,7 +26,10 @@ export default function DepartmentUsageTable({
   month,
   year,
 }: DepartmentUsageTableProps) {
-  const [sortBy, setSortBy] = useState<SortField>("usagePercent");
+  const isAicMode = isAicReportingMonth(month, year);
+  const [sortBy, setSortBy] = useState<SortField>(() =>
+    isAicMode ? "totalRequests" : "usagePercent",
+  );
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
   function handleSortClick(field: string) {
@@ -47,8 +57,17 @@ export default function DepartmentUsageTable({
         <thead>
           <tr className="border-b border-gray-200 bg-gray-50">
             <SortableTableHeader label="Department Name" field="departmentName" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} />
-            <SortableTableHeader label="Avg Requests/Member" field="averageRequestsPerMember" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
-            <SortableTableHeader label="Usage %" field="usagePercent" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            {isAicMode ? (
+              <>
+                <SortableTableHeader label="Total AIC Units" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+                <SortableTableHeader label="Total Spending" field="totalGrossAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+              </>
+            ) : (
+              <>
+                <SortableTableHeader label="Avg Requests/Member" field="averageRequestsPerMember" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+                <SortableTableHeader label="Usage %" field="usagePercent" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -63,30 +82,53 @@ export default function DepartmentUsageTable({
                   className="block w-full"
                 >
                   <span className="inline-flex items-center gap-2">
-                    <UsageStatusIndicator percent={dept.usagePercent} />
+                    {!isAicMode && <UsageStatusIndicator percent={dept.usagePercent} />}
                     {dept.departmentName}
                   </span>
                 </Link>
               </td>
-              <td className="px-6 py-3 text-right text-gray-700">
-                <Link
-                  href={`/usage/departments/${dept.departmentId}?month=${month}&year=${year}`}
-                  className="block w-full"
-                >
-                  {dept.averageRequestsPerMember.toLocaleString(undefined, {
-                    minimumFractionDigits: 1,
-                    maximumFractionDigits: 1,
-                  })}
-                </Link>
-              </td>
-              <td className="px-6 py-3 text-right text-gray-700">
-                <Link
-                  href={`/usage/departments/${dept.departmentId}?month=${month}&year=${year}`}
-                  className="block w-full"
-                >
-                  {Math.round(dept.usagePercent)}%
-                </Link>
-              </td>
+              {isAicMode ? (
+                <>
+                  <td className="px-6 py-3 text-right text-gray-700">
+                    <Link
+                      href={`/usage/departments/${dept.departmentId}?month=${month}&year=${year}`}
+                      className="block w-full"
+                    >
+                      {dept.totalRequests.toLocaleString()}
+                    </Link>
+                  </td>
+                  <td className="px-6 py-3 text-right text-gray-700">
+                    <Link
+                      href={`/usage/departments/${dept.departmentId}?month=${month}&year=${year}`}
+                      className="block w-full"
+                    >
+                      {formatCurrency(dept.totalGrossAmount)}
+                    </Link>
+                  </td>
+                </>
+              ) : (
+                <>
+                  <td className="px-6 py-3 text-right text-gray-700">
+                    <Link
+                      href={`/usage/departments/${dept.departmentId}?month=${month}&year=${year}`}
+                      className="block w-full"
+                    >
+                      {dept.averageRequestsPerMember.toLocaleString(undefined, {
+                        minimumFractionDigits: 1,
+                        maximumFractionDigits: 1,
+                      })}
+                    </Link>
+                  </td>
+                  <td className="px-6 py-3 text-right text-gray-700">
+                    <Link
+                      href={`/usage/departments/${dept.departmentId}?month=${month}&year=${year}`}
+                      className="block w-full"
+                    >
+                      {Math.round(dept.usagePercent)}%
+                    </Link>
+                  </td>
+                </>
+              )}
             </tr>
           ))}
         </tbody>

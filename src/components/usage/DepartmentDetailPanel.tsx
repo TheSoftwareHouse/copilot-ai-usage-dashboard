@@ -1,17 +1,20 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import MonthFilter from "@/components/dashboard/MonthFilter";
-import DepartmentMemberChart from "@/components/usage/DepartmentMemberChart";
+import TeamDailyChart from "@/components/usage/TeamDailyChart";
 import TeamMemberTable from "@/components/usage/TeamMemberTable";
-import DepartmentDetailStatsCards from "@/components/usage/DepartmentDetailStatsCards";
 import UsageBreadcrumb from "@/components/usage/UsageBreadcrumb";
-import { UsageProgressBar } from "@/components/usage/UsageProgressBar";
-import { MONTH_NAMES } from "@/lib/constants";
+import UsageCostStatsCards from "@/components/usage/UsageCostStatsCards";
+import DepartmentDetailStatsCards from "@/components/usage/DepartmentDetailStatsCards";
 import { useAvailableMonths } from "@/lib/hooks/useAvailableMonths";
 import { memberMatchesSearch } from "@/lib/usage-helpers";
+import { isAicReportingMonth } from "@/lib/aic-reporting";
 import type { MemberEntry } from "@/lib/types";
+import type { UsageCostMetrics } from "@/lib/usage-cost-metrics";
+
+const DEPARTMENT_CHART_ACCESSIBLE_LABEL =
+  "Daily AIC Units line chart for each department member";
 
 interface DepartmentInfo {
   departmentId: number;
@@ -20,15 +23,21 @@ interface DepartmentInfo {
   totalRequests: number;
   totalGrossAmount: number;
   averageRequestsPerMember: number;
-  usagePercent: number;
+}
+
+interface MemberDailyUsage {
+  seatId: number;
+  githubUsername: string;
+  days: { day: number; totalRequests: number }[];
 }
 
 interface DepartmentDetailResponse {
   department: DepartmentInfo;
   members: MemberEntry[];
+  dailyUsagePerMember: MemberDailyUsage[];
+  costStats: UsageCostMetrics;
   month: number;
   year: number;
-  premiumRequestsPerSeat?: number;
 }
 
 interface DepartmentDetailPanelProps {
@@ -42,7 +51,6 @@ export default function DepartmentDetailPanel({
   initialMonth,
   initialYear,
 }: DepartmentDetailPanelProps) {
-  const router = useRouter();
   const [month, setMonth] = useState(initialMonth);
   const [year, setYear] = useState(initialYear);
   const [data, setData] = useState<DepartmentDetailResponse | null>(null);
@@ -146,14 +154,19 @@ export default function DepartmentDetailPanel({
 
   if (!data) return null;
 
-  const { department, members } = data;
-  const premiumRequestsPerSeat = data.premiumRequestsPerSeat ?? 300;
-  const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
+  const { department, members, dailyUsagePerMember } = data;
   const hasMembers = members.length > 0;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const isAicMode = isAicReportingMonth(month, year);
 
   const filteredMembers = search
     ? members.filter((m) => memberMatchesSearch(m, search))
     : members;
+
+  const filteredSeatIds = new Set(filteredMembers.map((m) => m.seatId));
+  const filteredDailyUsage = search
+    ? dailyUsagePerMember.filter((d) => filteredSeatIds.has(d.seatId))
+    : dailyUsagePerMember;
 
   return (
     <div className="space-y-6">
@@ -164,9 +177,6 @@ export default function DepartmentDetailPanel({
         month={month}
         year={year}
       />
-
-      {/* Usage Progress Bar */}
-      <UsageProgressBar percent={department.usagePercent} />
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -189,8 +199,9 @@ export default function DepartmentDetailPanel({
         />
       </div>
 
-      {/* Stats Cards */}
-      <DepartmentDetailStatsCards departmentId={departmentId} month={month} year={year} />
+      {!isAicMode && <DepartmentDetailStatsCards departmentId={departmentId} month={month} year={year} />}
+
+      <UsageCostStatsCards costStats={data.costStats} />
 
       {!hasMembers ? (
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
@@ -215,20 +226,16 @@ export default function DepartmentDetailPanel({
             />
           </div>
 
-          {/* Member Usage Chart */}
           <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-gray-900">
-              Member Usage — {monthLabel}
+              {isAicMode ? "Daily AIC Units by Member" : "Daily Usage by Member"}
             </h2>
             <div className="mt-4">
-              <DepartmentMemberChart
-                members={filteredMembers}
-                premiumRequestsPerSeat={premiumRequestsPerSeat}
-                onBarClick={(seatId) =>
-                  router.push(
-                    `/usage/seats/${seatId}?month=${month}&year=${year}`,
-                  )
-                }
+              <TeamDailyChart
+                dailyUsagePerMember={filteredDailyUsage}
+                daysInMonth={daysInMonth}
+                metricLabel={isAicMode ? "AIC Units" : "Total Requests"}
+                accessibleLabel={DEPARTMENT_CHART_ACCESSIBLE_LABEL}
               />
             </div>
           </div>
@@ -244,7 +251,7 @@ export default function DepartmentDetailPanel({
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Members</h2>
               <div className="mt-4">
-                <TeamMemberTable members={filteredMembers} premiumRequestsPerSeat={premiumRequestsPerSeat} month={month} year={year} />
+                <TeamMemberTable members={filteredMembers} month={month} year={year} />
               </div>
             </div>
           )}

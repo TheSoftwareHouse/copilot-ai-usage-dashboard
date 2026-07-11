@@ -5,11 +5,11 @@ import { JobExecutionEntity } from "../entities/job-execution.entity";
 import { UserEntity } from "../entities/user.entity";
 import { SessionEntity } from "../entities/session.entity";
 import { DashboardMonthlySummaryEntity } from "../entities/dashboard-monthly-summary.entity";
+import { ImportHistoryEntity } from "../entities/import-history.entity";
 import { TeamEntity } from "../entities/team.entity";
 import { TeamMemberSnapshotEntity } from "../entities/team-member-snapshot.entity";
 import { DepartmentEntity } from "../entities/department.entity";
 import { GitHubAppEntity } from "../entities/github-app.entity";
-import { TelemetryEventEntity } from "../entities/telemetry-event.entity";
 
 export const allEntities = [
   ConfigurationEntity,
@@ -19,11 +19,11 @@ export const allEntities = [
   UserEntity,
   SessionEntity,
   DashboardMonthlySummaryEntity,
+  ImportHistoryEntity,
   TeamEntity,
   TeamMemberSnapshotEntity,
   DepartmentEntity,
   GitHubAppEntity,
-  TelemetryEventEntity,
 ];
 
 export function parseConnectionString(url: string) {

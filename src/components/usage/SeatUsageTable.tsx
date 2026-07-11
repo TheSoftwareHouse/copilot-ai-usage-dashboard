@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { calcUsagePercent } from "@/lib/usage-helpers";
-import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
 import DeviationIcon from "@/components/shared/DeviationIcon";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
@@ -12,13 +10,12 @@ interface SeatUsageTableProps {
   seats: SeatUsageEntry[];
   month: number;
   year: number;
-  premiumRequestsPerSeat: number;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
   onSort?: (field: string) => void;
 }
 
-export default function SeatUsageTable({ seats, month, year, premiumRequestsPerSeat, sortBy, sortOrder, onSort }: SeatUsageTableProps) {
+export default function SeatUsageTable({ seats, month, year, sortBy, sortOrder, onSort }: SeatUsageTableProps) {
   const isSortable = sortBy !== undefined && sortOrder !== undefined && onSort !== undefined;
 
   return (
@@ -37,11 +34,10 @@ export default function SeatUsageTable({ seats, month, year, premiumRequestsPerS
             ) : (
               <th className="px-6 py-3 font-medium text-gray-500">Department</th>
             )}
-            <th className="px-6 py-3 text-right font-medium text-gray-500">Usage</th>
             {isSortable ? (
-              <SortableTableHeader label="Total Requests" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={onSort} align="right" />
+              <SortableTableHeader label="AIC Units" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={onSort} align="right" />
             ) : (
-              <th className="px-6 py-3 text-right font-medium text-gray-500">Total Requests</th>
+              <th className="px-6 py-3 text-right font-medium text-gray-500">AIC Units</th>
             )}
             {isSortable ? (
               <SortableTableHeader label="Total Spending" field="totalGrossAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={onSort} align="right" />
@@ -52,8 +48,6 @@ export default function SeatUsageTable({ seats, month, year, premiumRequestsPerS
         </thead>
         <tbody>
           {seats.map((seat) => {
-            const rawPercent = calcUsagePercent(seat.totalRequests, premiumRequestsPerSeat);
-
             return (
             <tr
               key={seat.seatId}
@@ -65,11 +59,10 @@ export default function SeatUsageTable({ seats, month, year, premiumRequestsPerS
                   className="block w-full"
                 >
                   <span className="inline-flex items-center gap-2">
-                    <UsageStatusIndicator percent={rawPercent} />
-                    {seat.deviationLevel !== "none" && seat.normValue !== null && (
+                    {seat.deviationLevel !== "none" && (
                       <DeviationIcon
                         level={seat.deviationLevel}
-                        tooltipText={`${seat.deviationLevel === "alert" ? "Alert" : "Warning"}: ${seat.peakMultiplier?.toFixed(1)}x norm on Day ${seat.peakDay}`}
+                        tooltipText={`${seat.deviationLevel === "alert" ? "Alert" : "Warning"}: ${Math.round(seat.peakMultiplier ?? 0).toLocaleString()} AIC Units on Day ${seat.peakDay}`}
                       />
                     )}
                     {seat.githubUsername}
@@ -90,14 +83,6 @@ export default function SeatUsageTable({ seats, month, year, premiumRequestsPerS
                   className="block w-full"
                 >
                   {seat.department ?? "—"}
-                </Link>
-              </td>
-              <td className="px-6 py-3 text-right text-gray-700">
-                <Link
-                  href={`/usage/seats/${seat.seatId}?month=${month}&year=${year}`}
-                  className="block w-full"
-                >
-                  {seat.totalRequests.toLocaleString()} / {premiumRequestsPerSeat} ({Math.round(rawPercent)}%)
                 </Link>
               </td>
               <td className="px-6 py-3 text-right text-gray-700">

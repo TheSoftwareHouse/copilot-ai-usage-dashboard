@@ -14,6 +14,8 @@ import {
 import { seedDefaultAdmin } from "@/lib/auth";
 import { getAuthMethod } from "@/lib/auth-config";
 
+export const runtime = "nodejs";
+
 const TARGET_TYPE_MAP: Record<string, ApiMode> = {
   Organization: ApiMode.ORGANISATION,
   Enterprise: ApiMode.ENTERPRISE,
@@ -120,7 +122,6 @@ export async function POST(request: Request) {
       await manager.getRepository(ConfigurationEntity).save({
         apiMode,
         entityName,
-        premiumRequestsPerSeat: 300,
       });
     });
 

@@ -11,8 +11,10 @@ interface SeatOption {
 
 interface AddMembersFormProps {
   teamId: number;
+  month: number;
+  year: number;
   existingMemberSeatIds: number[];
-  onMembersAdded: () => void;
+  onMembersAdded: (allocationWarnings: { seatId: number; totalAllocationPercentage: number }[]) => void;
 }
 
 function formatSeatName(firstName: string | null, lastName: string | null): string {
@@ -22,6 +24,8 @@ function formatSeatName(firstName: string | null, lastName: string | null): stri
 
 export default function AddMembersForm({
   teamId,
+  month,
+  year,
   existingMemberSeatIds,
   onMembersAdded,
 }: AddMembersFormProps) {
@@ -32,6 +36,8 @@ export default function AddMembersForm({
   const [selectedSeatIds, setSelectedSeatIds] = useState<Set<number>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [allocationPercentage, setAllocationPercentage] = useState<string>("100");
+  const [allocationWarnings, setAllocationWarnings] = useState<{ seatId: number; totalAllocationPercentage: number }[]>([]);
 
   const fetchSeats = useCallback(async () => {
     setIsLoadingSeats(true);
@@ -108,15 +114,24 @@ export default function AddMembersForm({
   async function handleSubmit() {
     if (selectedSeatIds.size === 0) return;
     setSubmitError(null);
+    setAllocationWarnings([]);
     setIsSubmitting(true);
     try {
+      const parsedAllocation = allocationPercentage.trim() === "" ? undefined : Number(allocationPercentage);
       const response = await fetch(`/api/teams/${teamId}/members`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ seatIds: [...selectedSeatIds] }),
+        body: JSON.stringify({
+          seatIds: [...selectedSeatIds],
+          month,
+          year,
+          allocationPercentage: parsedAllocation,
+        }),
       });
       if (response.status === 201) {
-        onMembersAdded();
+        const data = await response.json();
+        setAllocationWarnings(data.allocationWarnings ?? []);
+        onMembersAdded(data.allocationWarnings ?? []);
         return;
       }
       const data = await response.json().catch(() => null);
@@ -131,6 +146,9 @@ export default function AddMembersForm({
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 mb-4">
       <h3 className="text-sm font-semibold text-gray-900 mb-3">Add Members</h3>
+      <p className="mb-3 text-xs text-gray-500">
+        Adding members to {month}/{year}. Leave allocation empty to default to 100%.
+      </p>
 
       {isLoadingSeats && (
         <p className="text-sm text-gray-500">Loading available seats…</p>
@@ -170,6 +188,21 @@ export default function AddMembersForm({
               placeholder="Search seats…"
               aria-label="Search available seats"
               className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="mb-3">
+            <label htmlFor="allocation-percentage" className="block text-xs font-medium text-gray-700 mb-1">
+              Cost allocation % (optional, applies to the whole batch)
+            </label>
+            <input
+              id="allocation-percentage"
+              type="number"
+              min={1}
+              max={100}
+              value={allocationPercentage}
+              onChange={(e) => setAllocationPercentage(e.target.value)}
+              className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
@@ -219,6 +252,16 @@ export default function AddMembersForm({
           >
             {isSubmitting ? "Adding…" : `Add Selected (${selectedSeatIds.size})`}
           </button>
+
+          {allocationWarnings.length > 0 && (
+            <div role="alert" className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              {allocationWarnings.map((warning) => (
+                <p key={warning.seatId}>
+                  Seat #{warning.seatId} is now allocated at {warning.totalAllocationPercentage}% across teams for this month.
+                </p>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

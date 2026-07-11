@@ -31,8 +31,8 @@ async function seedDashboardSummary(
 ) {
   const client = await getClient();
   await client.query(
-    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalPremiumRequests", "includedPremiumRequestsUsed", "modelUsage", "mostActiveUsers", "leastActiveUsers")
-     VALUES ($1, $2, 10, 8, 500, 300, 1000, 800, $3::jsonb, '[]'::jsonb, '[]'::jsonb)
+    `INSERT INTO dashboard_monthly_summary ("month", "year", "totalSeats", "activeSeats", "totalSpending", "seatBaseCost", "totalAiCredits", "modelUsage", "mostActiveUsers", "leastActiveUsers")
+     VALUES ($1, $2, 10, 8, 500, 300, 1000, $3::jsonb, '[]'::jsonb, '[]'::jsonb)
      ON CONFLICT ON CONSTRAINT "UQ_dashboard_monthly_summary_month_year" DO UPDATE SET
        "modelUsage" = EXCLUDED."modelUsage"`,
     [month, year, JSON.stringify(modelUsage)],
@@ -177,14 +177,14 @@ test.describe("Model Usage Drill-Down", () => {
     await loginViaApi(page, "admin", "password123");
     await page.goto("/dashboard");
 
-    // Wait for Model Usage Breakdown table
+    // Wait for AIC model breakdown table
     await expect(
-      page.getByRole("heading", { name: "Model Usage Breakdown" }),
+      page.getByRole("heading", { name: "AIC Model Breakdown" }),
     ).toBeVisible();
 
     // Click the GPT-4o model row
     const modelTable = page
-      .getByRole("heading", { name: "Model Usage Breakdown" })
+      .getByRole("heading", { name: "AIC Model Breakdown" })
       .locator("../../..")
       .locator("table");
     const gptRow = modelTable.locator("tbody tr", { hasText: "GPT-4o" });
@@ -237,7 +237,7 @@ test.describe("Model Usage Drill-Down", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: `GPT-4o — ${currentMonthName} ${currentYear}`,
+        name: `AIC Model Usage — GPT-4o — ${currentMonthName} ${currentYear}`,
       }),
     ).toBeVisible();
   });
@@ -254,7 +254,7 @@ test.describe("Model Usage Drill-Down", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: `GPT-4o — ${currentMonthName} ${TEST_DAY}, ${currentYear}`,
+        name: `AIC Model Usage — GPT-4o — ${currentMonthName} ${TEST_DAY}, ${currentYear}`,
       }),
     ).toBeVisible();
   });
@@ -272,7 +272,7 @@ test.describe("Model Usage Drill-Down", () => {
     // Wait for heading to confirm data loaded
     await expect(
       page.getByRole("heading", {
-        name: `GPT-4o — ${currentMonthName} ${currentYear}`,
+        name: `AIC Model Usage — GPT-4o — ${currentMonthName} ${currentYear}`,
       }),
     ).toBeVisible();
 
@@ -349,14 +349,14 @@ test.describe("Model Usage Drill-Down", () => {
 
     // Click Requests column to toggle to asc — user-model-beta (30) should be first
     await page
-      .getByRole("button", { name: /sort by requests/i })
+      .getByRole("button", { name: /sort by aic units/i })
       .click();
     const firstRowAsc = usersTable.locator("tbody tr").first();
     await expect(firstRowAsc.getByText("user-model-beta")).toBeVisible();
 
     // Click Spending column to sort by spending desc — user-model-alpha ($4.00) should be first
     await page
-      .getByRole("button", { name: /sort by spending/i })
+      .getByRole("button", { name: /sort by aic cost/i })
       .click();
     const firstRowSpending = usersTable.locator("tbody tr").first();
     await expect(
@@ -376,7 +376,7 @@ test.describe("Model Usage Drill-Down", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: `GPT-4o — ${currentMonthName} ${currentYear}`,
+        name: `AIC Model Usage — GPT-4o — ${currentMonthName} ${currentYear}`,
       }),
     ).toBeVisible();
 
@@ -397,11 +397,11 @@ test.describe("Model Usage Drill-Down", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: `GPT-4o — ${currentMonthName} ${TEST_DAY}, ${currentYear}`,
+        name: `AIC Model Usage — GPT-4o — ${currentMonthName} ${TEST_DAY}, ${currentYear}`,
       }),
     ).toBeVisible();
 
-    await page.getByRole("link", { name: /back to daily usage/i }).click();
+    await page.getByRole("link", { name: /back to daily aic usage/i }).click();
 
     await expect(page).toHaveURL(
       `/dashboard/daily/${TEST_DAY}?month=${currentMonth}&year=${currentYear}`,
@@ -418,11 +418,11 @@ test.describe("Model Usage Drill-Down", () => {
 
     await expect(
       page.getByRole("heading", {
-        name: "NonExistentModel — January 2020",
+        name: "AIC Model Usage — NonExistentModel — January 2020",
       }),
     ).toBeVisible();
     await expect(
-      page.getByText("No usage data for this model and time period."),
+      page.getByText("No AIC CSV data for this model and time period."),
     ).toBeVisible();
   });
 
@@ -450,7 +450,7 @@ test.describe("Model Usage Drill-Down", () => {
     // Verify the heading shows the decoded model name
     await expect(
       page.getByRole("heading", {
-        name: `GPT-4o/Mini Plus — ${currentMonthName} ${currentYear}`,
+        name: `AIC Model Usage — GPT-4o/Mini Plus — ${currentMonthName} ${currentYear}`,
       }),
     ).toBeVisible();
 
@@ -465,5 +465,49 @@ test.describe("Model Usage Drill-Down", () => {
     await expect(specialRow).toBeVisible();
     await expect(specialRow.getByText("25")).toBeVisible();
     await expect(specialRow.getByText("$1.00")).toBeVisible();
+  });
+
+  test("should navigate from model users seat link to seat model daily detail with scope preserved", async ({
+    page,
+  }) => {
+    const specialModel = "Model Name / 50%";
+
+    const seatId = await seedSeat({
+      githubUsername: "seat-model-route-user",
+      githubUserId: 2004,
+      firstName: "Dana",
+      lastName: "Scoped",
+      department: "Operations",
+    });
+
+    await seedUsage(seatId, TEST_DAY, currentMonth, currentYear, [
+      makeUsageItem(specialModel, 25, 1.0),
+      makeUsageItem("Another Model", 60, 2.4),
+    ]);
+
+    await loginViaApi(page, "admin", "password123");
+    await page.goto(
+      `/dashboard/model/${encodeURIComponent(specialModel)}?month=${currentMonth}&year=${currentYear}`,
+    );
+
+    await expect(
+      page.getByRole("heading", {
+        name: `AIC Model Usage — ${specialModel} — ${currentMonthName} ${currentYear}`,
+      }),
+    ).toBeVisible();
+
+    const seatLink = page.getByRole("link", { name: "seat-model-route-user" });
+    await expect(seatLink).toBeVisible();
+    await seatLink.click();
+
+    await expect(page).toHaveURL(
+      `/usage/seats/${seatId}/models/${encodeURIComponent(specialModel)}?month=${currentMonth}&year=${currentYear}`,
+    );
+
+    await expect(
+      page.getByRole("heading", {
+        name: `Daily AIC Units for ${specialModel} by seat-model-route-user (${currentMonthName} ${currentYear})`,
+      }),
+    ).toBeVisible();
   });
 });

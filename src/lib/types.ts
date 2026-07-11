@@ -15,5 +15,7 @@ export interface MemberEntry {
   firstName: string | null;
   lastName: string | null;
   totalRequests: number;
+  allocatedRequests?: number;
   totalGrossAmount: number;
+  allocationPercentage?: number;
 }

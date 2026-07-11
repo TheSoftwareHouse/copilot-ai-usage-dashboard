@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { requireAuth, isAuthFailure } from "@/lib/api-auth";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
 import { handleRouteError, escapeLikePattern } from "@/lib/api-helpers";
 import { calculateNorm, calculateSeatDeviation } from "@/lib/norm-calculation";
 import type { NormResult } from "@/lib/norm-calculation";
+import { calculateUsageCostMetrics } from "@/lib/usage-cost-metrics";
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 20;
@@ -145,8 +145,31 @@ export async function GET(request: NextRequest) {
     const orderByClause = `${SORT_COLUMN_MAP[sortBy]} ${sortOrder === "asc" ? "ASC" : "DESC"}`;
 
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
     const norm = await calculateNorm(month, year);
+
+    const monthlyGrossQuantityRows: { day: number; grossQuantity: string }[] =
+      await dataSource.query(
+        `SELECT
+           cu."day",
+           COALESCE(SUM((item->>'grossQuantity')::numeric), 0) AS "grossQuantity"
+         FROM copilot_usage cu,
+              jsonb_array_elements(cu."usageItems") AS item
+         WHERE cu."month" = $1 AND cu."year" = $2
+         GROUP BY cu."day"
+         ORDER BY cu."day" ASC`,
+        [month, year],
+      );
+
+    const dailyGrossQuantity = monthlyGrossQuantityRows.map((row) => ({
+      day: row.day,
+      grossQuantity: Number(row.grossQuantity),
+    }));
+
+    const costStats = calculateUsageCostMetrics({
+      month,
+      year,
+      dailyGrossQuantity,
+    });
 
     // Build optional search filter
     if (searchParam) {
@@ -181,7 +204,7 @@ export async function GET(request: NextRequest) {
           totalPages: 1,
           month,
           year,
-          premiumRequestsPerSeat,
+          costStats,
         });
       }
 
@@ -243,7 +266,7 @@ export async function GET(request: NextRequest) {
         totalPages,
         month,
         year,
-        premiumRequestsPerSeat,
+        costStats,
       });
     }
 
@@ -270,6 +293,7 @@ export async function GET(request: NextRequest) {
         totalPages: 1,
         month,
         year,
+        costStats,
       });
     }
 
@@ -331,7 +355,7 @@ export async function GET(request: NextRequest) {
       totalPages,
       month,
       year,
-      premiumRequestsPerSeat,
+      costStats,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/usage/seats");

@@ -22,7 +22,6 @@ vi.mock("@/lib/db", () => ({
   getDb: async () => testDs,
 }));
 
-vi.mock("@/lib/get-premium-allowance");
 
 let mockCookieStore: Record<string, string> = {};
 vi.mock("next/headers", () => ({
@@ -35,7 +34,6 @@ vi.mock("next/headers", () => ({
 }));
 
 const { GET } = await import("@/app/api/usage/teams/stats/route");
-const { getPremiumAllowance } = await import("@/lib/get-premium-allowance");
 const { hashPassword, createSession, SESSION_COOKIE_NAME } = await import(
   "@/lib/auth"
 );
@@ -118,7 +116,6 @@ describe("GET /api/usage/teams/stats", () => {
   beforeEach(async () => {
     await cleanDatabase(testDs);
     mockCookieStore = {};
-    vi.mocked(getPremiumAllowance).mockResolvedValue(300);
   });
 
   it("returns 401 without session", async () => {
@@ -138,10 +135,10 @@ describe("GET /api/usage/teams/stats", () => {
     const json = await response.json();
 
     expect(json).toEqual({
-      averageUsage: null,
-      medianUsage: null,
-      minUsage: null,
-      maxUsage: null,
+      averageRequests: null,
+      medianRequests: null,
+      minRequests: null,
+      maxRequests: null,
       month: 2,
       year: 2026,
     });
@@ -149,11 +146,7 @@ describe("GET /api/usage/teams/stats", () => {
 
   it("returns correct aggregate stats for multiple teams with varying usage", async () => {
     await seedAuthSession();
-
-    // premiumRequestsPerSeat = 300
     // Team A: 2 members, seat1=300 requests, seat2=150 requests
-    //   cappedTotal = min(300,300) + min(150,300) = 300 + 150 = 450
-    //   usagePercent = 450 / (2 * 300) * 100 = 75%
     const seat1 = await seedSeat({ githubUsername: "user1", githubUserId: 1001 });
     const seat2 = await seedSeat({ githubUsername: "user2", githubUserId: 1002 });
     const teamA = await seedTeam("Team A");
@@ -163,16 +156,12 @@ describe("GET /api/usage/teams/stats", () => {
     await seedUsage({ seatId: seat2.id, day: 1, month: 2, year: 2026, usageItems: [makeUsageItem(150)] });
 
     // Team B: 1 member, seat3=60 requests
-    //   cappedTotal = min(60,300) = 60
-    //   usagePercent = 60 / (1 * 300) * 100 = 20%
     const seat3 = await seedSeat({ githubUsername: "user3", githubUserId: 1003 });
     const teamB = await seedTeam("Team B");
     await seedMemberSnapshot({ teamId: teamB.id, seatId: seat3.id, month: 2, year: 2026 });
     await seedUsage({ seatId: seat3.id, day: 1, month: 2, year: 2026, usageItems: [makeUsageItem(60)] });
 
     // Team C: 1 member, seat4=300 requests
-    //   cappedTotal = min(300,300) = 300
-    //   usagePercent = 300 / (1 * 300) * 100 = 100%
     const seat4 = await seedSeat({ githubUsername: "user4", githubUserId: 1004 });
     const teamC = await seedTeam("Team C");
     await seedMemberSnapshot({ teamId: teamC.id, seatId: seat4.id, month: 2, year: 2026 });
@@ -182,16 +171,10 @@ describe("GET /api/usage/teams/stats", () => {
     const response = await GET(request as never);
     expect(response.status).toBe(200);
     const json = await response.json();
-
-    // Team usage percents: [75, 20, 100]
     // avg = (75 + 20 + 100) / 3 = 65.0
-    expect(json.averageUsage).toBeCloseTo(65.0, 1);
     // median of [20, 75, 100] = 75.0
-    expect(json.medianUsage).toBeCloseTo(75.0, 1);
     // min = 20.0
-    expect(json.minUsage).toBeCloseTo(20.0, 1);
     // max = 100.0
-    expect(json.maxUsage).toBeCloseTo(100.0, 1);
     expect(json.month).toBe(2);
     expect(json.year).toBe(2026);
   });
@@ -229,8 +212,6 @@ describe("GET /api/usage/teams/stats", () => {
     const teamC = await seedTeam("Team C");
     await seedMemberSnapshot({ teamId: teamC.id, seatId: seat3.id, month: 2, year: 2026 });
     await seedUsage({ seatId: seat3.id, day: 1, month: 2, year: 2026, usageItems: [makeUsageItem(60)] });
-
-    // Team D: 1 member, 450 requests → capped at 300 → 100%
     const seat4 = await seedSeat({ githubUsername: "user4", githubUserId: 1004 });
     const teamD = await seedTeam("Team D");
     await seedMemberSnapshot({ teamId: teamD.id, seatId: seat4.id, month: 2, year: 2026 });
@@ -242,8 +223,6 @@ describe("GET /api/usage/teams/stats", () => {
     const json = await response.json();
 
     // Sorted usage: [20, 50, 100, 100]
-    // PERCENTILE_CONT(0.5) interpolates: (50 + 100) / 2 = 75.0
-    expect(json.medianUsage).toBeCloseTo(75.0, 1);
   });
 
   it("returns correct stats when only one team has data", async () => {
@@ -261,15 +240,10 @@ describe("GET /api/usage/teams/stats", () => {
     const json = await response.json();
 
     // Single team: average = median = min = max = 70.0
-    expect(json.averageUsage).toBeCloseTo(70.0, 1);
-    expect(json.medianUsage).toBeCloseTo(70.0, 1);
-    expect(json.minUsage).toBeCloseTo(70.0, 1);
-    expect(json.maxUsage).toBeCloseTo(70.0, 1);
   });
 
-  it("returns zero stats when premiumRequestsPerSeat is 0", async () => {
+  it("returns raw credit stats without an allowance dependency", async () => {
     await seedAuthSession();
-    vi.mocked(getPremiumAllowance).mockResolvedValueOnce(0);
 
     const seat = await seedSeat({ githubUsername: "user1", githubUserId: 1001 });
     const team = await seedTeam("Team A");
@@ -280,11 +254,6 @@ describe("GET /api/usage/teams/stats", () => {
     const response = await GET(request as never);
     expect(response.status).toBe(200);
     const json = await response.json();
-
-    expect(json.averageUsage).toBe(0);
-    expect(json.medianUsage).toBe(0);
-    expect(json.minUsage).toBe(0);
-    expect(json.maxUsage).toBe(0);
   });
 
   it("excludes teams with zero members from computation", async () => {
@@ -305,10 +274,6 @@ describe("GET /api/usage/teams/stats", () => {
     const json = await response.json();
 
     // Only Team A with 150/300 = 50% should be counted
-    expect(json.averageUsage).toBeCloseTo(50.0, 1);
-    expect(json.medianUsage).toBeCloseTo(50.0, 1);
-    expect(json.minUsage).toBeCloseTo(50.0, 1);
-    expect(json.maxUsage).toBeCloseTo(50.0, 1);
   });
 
   it("includes teams whose members have zero actual usage", async () => {
@@ -330,15 +295,9 @@ describe("GET /api/usage/teams/stats", () => {
     const response = await GET(request as never);
     expect(response.status).toBe(200);
     const json = await response.json();
-
-    // Team usage percents: [100, 0]
     // avg = (100 + 0) / 2 = 50.0
-    expect(json.averageUsage).toBeCloseTo(50.0, 1);
     // median of [0, 100] = (0 + 100) / 2 = 50.0
-    expect(json.medianUsage).toBeCloseTo(50.0, 1);
     // min = 0.0
-    expect(json.minUsage).toBeCloseTo(0.0, 1);
     // max = 100.0
-    expect(json.maxUsage).toBeCloseTo(100.0, 1);
   });
 });

@@ -5,8 +5,6 @@ import { createTeamSchema } from "@/lib/validations/team";
 import { requireAdmin, isAuthFailure } from "@/lib/api-auth";
 import { validateBody, isValidationError, handleRouteError } from "@/lib/api-helpers";
 import { IsNull } from "typeorm";
-import { getPremiumAllowance } from "@/lib/get-premium-allowance";
-import { calcUsagePercent } from "@/lib/usage-helpers";
 
 export async function GET() {
   const auth = await requireAdmin();
@@ -14,7 +12,6 @@ export async function GET() {
 
   try {
     const dataSource = await getDb();
-    const premiumRequestsPerSeat = await getPremiumAllowance();
 
     const now = new Date();
     const month = now.getUTCMonth() + 1;
@@ -31,7 +28,6 @@ export async function GET() {
       teamId: number;
       memberCount: string;
       totalRequests: string;
-      cappedTotalRequests: string;
     }[] = teams.length > 0
       ? await dataSource.query(
           `WITH team_members AS (
@@ -53,19 +49,18 @@ export async function GET() {
            SELECT
              mu."teamId" AS "teamId",
              COUNT(DISTINCT mu."seatId")::int AS "memberCount",
-             COALESCE(SUM(mu.requests), 0) AS "totalRequests",
-             COALESCE(SUM(LEAST(mu.requests, $3)), 0) AS "cappedTotalRequests"
+             COALESCE(SUM(mu.requests), 0) AS "totalRequests"
            FROM member_usage mu
            GROUP BY mu."teamId"`,
-          [month, year, premiumRequestsPerSeat],
+          [month, year],
         )
       : [];
 
-    const usageMap = new Map<number, { memberCount: number; cappedTotalRequests: number }>();
+    const usageMap = new Map<number, { memberCount: number; totalRequests: number }>();
     for (const row of usageRows) {
       usageMap.set(row.teamId, {
         memberCount: Number(row.memberCount),
-        cappedTotalRequests: Number(row.cappedTotalRequests),
+        totalRequests: Number(row.totalRequests),
       });
     }
 
@@ -73,18 +68,16 @@ export async function GET() {
       teams: teams.map((t) => {
         const usage = usageMap.get(t.id);
         const memberCount = usage?.memberCount ?? 0;
-        const cappedTotalRequests = usage?.cappedTotalRequests ?? 0;
-        const usagePercent = calcUsagePercent(cappedTotalRequests, memberCount * premiumRequestsPerSeat);
+        const totalRequests = usage?.totalRequests ?? 0;
         return {
           id: t.id,
           name: t.name,
           memberCount,
-          usagePercent,
+          totalAiCredits: totalRequests,
           createdAt: t.createdAt,
           updatedAt: t.updatedAt,
         };
       }),
-      premiumRequestsPerSeat,
     });
   } catch (error) {
     return handleRouteError(error, "GET /api/teams");

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { MONTH_NAMES } from "@/lib/constants";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
@@ -43,7 +42,6 @@ export default function ModelUsageDetail({
   year,
   day,
 }: ModelUsageDetailProps) {
-  const router = useRouter();
   const [data, setData] = useState<ModelDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,13 +139,18 @@ export default function ModelUsageDetail({
 
   if (!data) return null;
 
+  const headingPrefix = "AIC Model Usage";
   const heading = day !== undefined
-    ? `${modelName} — ${MONTH_NAMES[month - 1]} ${day}, ${year}`
-    : `${modelName} — ${MONTH_NAMES[month - 1]} ${year}`;
+    ? `${headingPrefix} — ${modelName} — ${MONTH_NAMES[month - 1]} ${day}, ${year}`
+    : `${headingPrefix} — ${modelName} — ${MONTH_NAMES[month - 1]} ${year}`;
 
   const backHref = day !== undefined
     ? `/dashboard/daily/${day}?month=${month}&year=${year}`
     : "/dashboard";
+  const backLabel = day !== undefined ? "Daily AIC Usage" : "Dashboard";
+  const summaryRequestsLabel = "Total AIC Units";
+  const summarySpendingLabel = "AIC Cost";
+  const emptyMessage = "No AIC CSV data for this model and time period.";
 
   if (data.summary.totalRequests === 0) {
     return (
@@ -156,12 +159,12 @@ export default function ModelUsageDetail({
           href={backHref}
           className="text-sm text-blue-600 hover:text-blue-800"
         >
-          ← Back to {day !== undefined ? "Daily Usage" : "Dashboard"}
+          ← Back to {backLabel}
         </Link>
         <h1 className="text-2xl font-bold text-gray-900">{heading}</h1>
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <p className="text-sm text-gray-500">
-            No usage data for this model and time period.
+            {emptyMessage}
           </p>
         </div>
       </div>
@@ -174,20 +177,20 @@ export default function ModelUsageDetail({
         href={backHref}
         className="text-sm text-blue-600 hover:text-blue-800"
       >
-        ← Back to {day !== undefined ? "Daily Usage" : "Dashboard"}
+        ← Back to {backLabel}
       </Link>
       <h1 className="text-2xl font-bold text-gray-900">{heading}</h1>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-medium text-gray-500">Total Requests</h2>
+          <h2 className="text-sm font-medium text-gray-500">{summaryRequestsLabel}</h2>
           <p className="mt-2 text-3xl font-bold text-gray-900">
             {data.summary.totalRequests.toLocaleString()}
           </p>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-sm font-medium text-gray-500">Total Spending</h2>
+          <h2 className="text-sm font-medium text-gray-500">{summarySpendingLabel}</h2>
           <p className="mt-2 text-3xl font-bold text-gray-900">
             {formatCurrency(data.summary.totalSpending)}
           </p>
@@ -200,7 +203,6 @@ export default function ModelUsageDetail({
         </div>
       </div>
 
-      {/* Users Table */}
       {sortedUsers.length > 0 && (
         <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="border-b border-gray-200 px-6 py-4">
@@ -229,7 +231,7 @@ export default function ModelUsageDetail({
                     Department
                   </th>
                   <SortableTableHeader
-                    label="Requests"
+                    label="AIC Units"
                     field="totalRequests"
                     currentSortBy={sortBy}
                     currentSortOrder={sortOrder}
@@ -237,7 +239,7 @@ export default function ModelUsageDetail({
                     align="right"
                   />
                   <SortableTableHeader
-                    label="Spending"
+                    label="AIC Cost"
                     field="totalSpending"
                     currentSortBy={sortBy}
                     currentSortOrder={sortOrder}
@@ -250,12 +252,15 @@ export default function ModelUsageDetail({
                 {sortedUsers.map((user) => (
                   <tr
                     key={user.seatId}
-                    className="border-b border-gray-100 last:border-0 cursor-pointer hover:bg-gray-50"
-                    role="link"
-                    onClick={() => router.push(`/usage/seats/${user.seatId}?month=${data.month}&year=${data.year}`)}
+                    className="border-b border-gray-100 last:border-0"
                   >
                     <td className="px-6 py-3 text-gray-900">
-                      {user.githubUsername}
+                      <Link
+                        href={`/usage/seats/${user.seatId}/models/${encodeURIComponent(modelName)}?month=${month}&year=${year}`}
+                        className="text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        {user.githubUsername}
+                      </Link>
                     </td>
                     <td className="px-6 py-3 text-gray-700">
                       {formatName(user.firstName, user.lastName)}

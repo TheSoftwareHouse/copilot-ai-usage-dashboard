@@ -2,8 +2,6 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
-import { calcUsagePercent } from "@/lib/usage-helpers";
-import { UsageStatusIndicator } from "@/components/usage/UsageStatusIndicator";
 import { formatCurrency, formatName } from "@/lib/format-helpers";
 import SortableTableHeader from "@/components/shared/SortableTableHeader";
 
@@ -15,17 +13,19 @@ interface TeamMember {
   firstName: string | null;
   lastName: string | null;
   totalRequests: number;
+  allocatedRequests?: number;
   totalGrossAmount: number;
+  allocationPercentage?: number;
 }
 
 interface TeamMemberTableProps {
   members: TeamMember[];
-  premiumRequestsPerSeat: number;
   month?: number;
   year?: number;
+  showAllocationColumns?: boolean;
 }
 
-export default function TeamMemberTable({ members, premiumRequestsPerSeat, month, year }: TeamMemberTableProps) {
+export default function TeamMemberTable({ members, month, year, showAllocationColumns = false }: TeamMemberTableProps) {
   const navigable = month != null && year != null;
 
   const [sortBy, setSortBy] = useState<SortField>("totalRequests");
@@ -67,13 +67,22 @@ export default function TeamMemberTable({ members, premiumRequestsPerSeat, month
           <tr className="border-b border-gray-200 bg-gray-50">
             <SortableTableHeader label="GitHub Username" field="githubUsername" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} />
             <SortableTableHeader label="Name" field="name" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} />
-            <SortableTableHeader label="Usage" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            <SortableTableHeader label="AIC Units" field="totalRequests" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
+            {showAllocationColumns && (
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Allocation %
+              </th>
+            )}
+            {showAllocationColumns && (
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Allocated Usage
+              </th>
+            )}
             <SortableTableHeader label="Gross Spending" field="totalGrossAmount" currentSortBy={sortBy} currentSortOrder={sortOrder} onSort={handleSortClick} align="right" />
           </tr>
         </thead>
         <tbody>
           {sortedMembers.map((member) => {
-            const rawPercent = calcUsagePercent(member.totalRequests, premiumRequestsPerSeat);
             const href = navigable
               ? `/usage/seats/${member.seatId}?month=${month}&year=${year}`
               : undefined;
@@ -87,13 +96,11 @@ export default function TeamMemberTable({ members, premiumRequestsPerSeat, month
                   {href ? (
                     <Link href={href} className="block w-full">
                       <span className="inline-flex items-center gap-2">
-                        <UsageStatusIndicator percent={rawPercent} />
                         {member.githubUsername}
                       </span>
                     </Link>
                   ) : (
                     <span className="inline-flex items-center gap-2">
-                      <UsageStatusIndicator percent={rawPercent} />
                       {member.githubUsername}
                     </span>
                   )}
@@ -110,12 +117,25 @@ export default function TeamMemberTable({ members, premiumRequestsPerSeat, month
                 <td className="px-6 py-3 text-right text-gray-700">
                   {href ? (
                     <Link href={href} className="block w-full">
-                      {member.totalRequests.toLocaleString()} / {premiumRequestsPerSeat} ({Math.round(rawPercent)}%)
+                      {member.totalRequests.toLocaleString()}
                     </Link>
                   ) : (
-                    <>{member.totalRequests.toLocaleString()} / {premiumRequestsPerSeat} ({Math.round(rawPercent)}%)</>
+                    member.totalRequests.toLocaleString()
                   )}
                 </td>
+                {showAllocationColumns && (
+                  <td className="px-6 py-3 text-right text-gray-700">
+                    {member.allocationPercentage != null ? `${member.allocationPercentage}%` : "100%"}
+                  </td>
+                )}
+                {showAllocationColumns && (
+                  <td className="px-6 py-3 text-right text-gray-700">
+                    {(member.allocatedRequests ?? member.totalRequests).toLocaleString(undefined, {
+                      minimumFractionDigits: 1,
+                      maximumFractionDigits: 1,
+                    })}
+                  </td>
+                )}
                 <td className="px-6 py-3 text-right text-gray-700">
                   {href ? (
                     <Link href={href} className="block w-full">

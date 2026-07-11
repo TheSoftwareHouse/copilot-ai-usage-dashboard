@@ -1,8 +1,13 @@
 /// <reference types="vitest/globals" />
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { DataSource } from "typeorm";
+import { CopilotSeatEntity } from "@/entities/copilot-seat.entity";
+import type { CopilotSeat } from "@/entities/copilot-seat.entity";
+import { CopilotUsageEntity } from "@/entities/copilot-usage.entity";
+import type { CopilotUsage } from "@/entities/copilot-usage.entity";
 import { DashboardMonthlySummaryEntity } from "@/entities/dashboard-monthly-summary.entity";
 import type { DashboardMonthlySummary } from "@/entities/dashboard-monthly-summary.entity";
+import { SeatStatus } from "@/entities/enums";
 import {
   getTestDataSource,
   cleanDatabase,
@@ -50,13 +55,37 @@ async function seedSummary(
     activeSeats: 8,
     totalSpending: 500.0,
     seatBaseCost: 152.0,
-    totalPremiumRequests: 1200,
-    includedPremiumRequestsUsed: 900,
+    totalAiCredits: 1200,
     modelUsage: [],
     mostActiveUsers: [],
     leastActiveUsers: [],
     ...overrides,
   } as Partial<DashboardMonthlySummary>);
+}
+
+async function seedSeat(
+  overrides: Partial<CopilotSeat> & { githubUsername: string },
+): Promise<CopilotSeat> {
+  const seatRepo = testDs.getRepository(CopilotSeatEntity);
+  return seatRepo.save({
+    githubUserId: Math.floor(Math.random() * 1000000),
+    status: SeatStatus.ACTIVE,
+    assignedAt: new Date(),
+    ...overrides,
+  } as Partial<CopilotSeat>);
+}
+
+async function seedUsage(
+  overrides: Partial<CopilotUsage> & {
+    seatId: number;
+    day: number;
+    month: number;
+    year: number;
+    usageItems: unknown[];
+  },
+): Promise<CopilotUsage> {
+  const usageRepo = testDs.getRepository(CopilotUsageEntity);
+  return usageRepo.save(overrides as Partial<CopilotUsage>);
 }
 
 describe("GET /api/dashboard/months", () => {
@@ -107,6 +136,72 @@ describe("GET /api/dashboard/months", () => {
     expect(monthKeys).toContain("1-2026");
     expect(monthKeys).toContain("2-2026");
     expect(monthKeys).toContain("12-2025");
+  });
+
+  it("includes May 2026+ months discovered from raw usage even without summaries", async () => {
+    await seedAuthSession();
+
+    const seat = await seedSeat({ githubUsername: "octocat" });
+    await seedUsage({
+      seatId: seat.id,
+      day: 2,
+      month: 5,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "AIC",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.5,
+          grossQuantity: 2,
+          grossAmount: 1,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.months).toContainEqual({ month: 5, year: 2026 });
+  });
+
+  it("does not add pre-May 2026 raw usage months without summaries", async () => {
+    await seedAuthSession();
+
+    const seat = await seedSeat({ githubUsername: "legacy-user" });
+    await seedUsage({
+      seatId: seat.id,
+      day: 2,
+      month: 4,
+      year: 2026,
+      usageItems: [
+        {
+          product: "Copilot",
+          sku: "AIC",
+          model: "GPT-4o",
+          unitType: "requests",
+          pricePerUnit: 0.5,
+          grossQuantity: 2,
+          grossAmount: 1,
+          discountQuantity: 0,
+          discountAmount: 0,
+          netQuantity: 0,
+          netAmount: 0,
+        },
+      ],
+    });
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const json = await response.json();
+
+    expect(json.months).not.toContainEqual({ month: 4, year: 2026 });
   });
 
   it("returns results sorted newest-first (year DESC, month DESC)", async () => {

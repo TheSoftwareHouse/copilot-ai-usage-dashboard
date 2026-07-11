@@ -5,6 +5,7 @@ export interface JobExecution {
   id: number;
   jobType: JobType;
   status: JobStatus;
+  reason: string | null;
   startedAt: Date;
   completedAt: Date | null;
   errorMessage: string | null;
@@ -23,11 +24,17 @@ export const JobExecutionEntity = new EntitySchema<JobExecution>({
     },
     jobType: {
       type: "enum",
+      // Includes retired values to keep historical rows queryable.
       enum: JobType,
     },
     status: {
       type: "enum",
       enum: JobStatus,
+    },
+    reason: {
+      type: "varchar",
+      length: 64,
+      nullable: true,
     },
     startedAt: {
       type: "timestamptz",

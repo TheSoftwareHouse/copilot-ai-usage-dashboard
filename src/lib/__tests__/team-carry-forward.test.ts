@@ -53,9 +53,16 @@ async function seedSnapshot(
   seatId: number,
   month: number,
   year: number,
+  allocationPercentage = 100,
 ): Promise<TeamMemberSnapshot> {
   const repo = ds.getRepository(TeamMemberSnapshotEntity);
-  return repo.save({ teamId, seatId, month, year } as Partial<TeamMemberSnapshot>);
+  return repo.save({
+    teamId,
+    seatId,
+    month,
+    year,
+    allocationPercentage,
+  } as Partial<TeamMemberSnapshot>);
 }
 
 function getCurrentMonthYear(): { month: number; year: number } {
@@ -90,8 +97,8 @@ describe("executeTeamCarryForward", () => {
     const seat1Id = await seedSeat(testDs, "user-1");
     const seat2Id = await seedSeat(testDs, "user-2");
 
-    await seedSnapshot(testDs, team.id, seat1Id, prev.month, prev.year);
-    await seedSnapshot(testDs, team.id, seat2Id, prev.month, prev.year);
+    await seedSnapshot(testDs, team.id, seat1Id, prev.month, prev.year, 75);
+    await seedSnapshot(testDs, team.id, seat2Id, prev.month, prev.year, 50);
 
     const result = await executeTeamCarryForward();
 
@@ -107,6 +114,7 @@ describe("executeTeamCarryForward", () => {
     expect(newSnapshots).toHaveLength(2);
     const seatIds = newSnapshots.map((s) => s.seatId).sort();
     expect(seatIds).toEqual([seat1Id, seat2Id].sort());
+    expect(newSnapshots.map((s) => s.allocationPercentage).sort()).toEqual([50, 75]);
   });
 
   it("is idempotent — running twice does not create duplicate snapshots", async () => {
