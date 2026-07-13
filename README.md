@@ -92,7 +92,9 @@ When using Azure Entra ID (`AUTH_METHOD=azure`):
 | `SYNC_CRON_SCHEDULE` | Preferred cron expression for background sync jobs. If no schedule variable is set, instrumentation uses `0 0 * * *` (daily at midnight UTC). | `0 0 * * *` |
 | `SYNC_INTERVAL_HOURS` / `SEAT_SYNC_INTERVAL_HOURS` | Legacy compatibility variables. Instrumentation converts a whole-number interval to a cron schedule when `SYNC_CRON_SCHEDULE` is not set. | — |
 | `SEAT_SYNC_ENABLED` | Enable automatic seat synchronization | `true` |
-| `SEAT_SYNC_RUN_ON_STARTUP` | Trigger the sync cycle — team carry-forward and seat sync — after startup | `false` |
+| `USAGE_COLLECTION_ENABLED` | Enable automatic usage data collection. Usage collection runs after a successful seat sync, or when seat sync is disabled. | `true` |
+| `SEAT_SYNC_RUN_ON_STARTUP` | Trigger the full sequential sync cycle after startup: team carry-forward, seat sync when enabled, then usage collection when enabled | `false` |
+| `USAGE_COLLECTION_RUN_ON_STARTUP` | Trigger the full sequential sync cycle after startup: team carry-forward, seat sync when enabled, then usage collection when enabled | `false` |
 
 `SYNC_CRON_SCHEDULE` takes precedence over the legacy interval variables. Docker Compose currently supplies `SEAT_SYNC_INTERVAL_HOURS=1` by default, so set `SYNC_CRON_SCHEDULE` explicitly when using Compose if you want the daily default.
 

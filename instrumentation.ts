@@ -73,6 +73,7 @@ export async function register() {
   const runScheduledSyncCycle = () =>
     runSyncCycle({
       seatSyncEnabled: process.env.SEAT_SYNC_ENABLED !== "false",
+      usageCollectionEnabled: process.env.USAGE_COLLECTION_ENABLED !== "false",
     }).catch((error) => {
       console.error("Scheduled sync cycle failed:", error);
     });
@@ -80,8 +81,10 @@ export async function register() {
   console.log(`Sync scheduler starting (cron: "${schedule}")`);
   cron.schedule(schedule, runScheduledSyncCycle, { timezone: "UTC" });
 
-  // Startup sync triggers the carry-forward -> seat-sync cycle.
-  const runOnStartup = process.env.SEAT_SYNC_RUN_ON_STARTUP === "true";
+  // Startup sync triggers the whole scheduled cycle.
+  const runOnStartup =
+    process.env.SEAT_SYNC_RUN_ON_STARTUP === "true" ||
+    process.env.USAGE_COLLECTION_RUN_ON_STARTUP === "true";
 
   if (runOnStartup) {
     console.log("Sync on startup enabled — scheduling initial cycle in 10s");

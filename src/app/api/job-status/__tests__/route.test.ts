@@ -94,6 +94,7 @@ describe("GET /api/job-status", () => {
     const json = await response.json();
     expect(json.seatSync).toBeNull();
     expect(json.teamCarryForward).toBeNull();
+    expect(json.usageCollection).toBeNull();
     expect(json.retiredJobs).toEqual({
       usageCollection: null,
       monthRecollection: null,
@@ -183,6 +184,9 @@ describe("GET /api/job-status", () => {
     expect(response.status).toBe(200);
 
     const json = await response.json();
+    expect(json.usageCollection).not.toBeNull();
+    expect(json.usageCollection.jobType).toBe("usage_collection");
+    expect(json.usageCollection.reason).toBe("unsupported_installation_mode");
     expect(json.retiredJobs.usageCollection).not.toBeNull();
     expect(json.retiredJobs.usageCollection.jobType).toBe("usage_collection");
     expect(json.retiredJobs.usageCollection.reason).toBe("unsupported_installation_mode");

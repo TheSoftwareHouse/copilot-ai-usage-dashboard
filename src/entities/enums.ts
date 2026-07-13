@@ -5,7 +5,7 @@ export enum ApiMode {
 
 export enum JobType {
   SEAT_SYNC = "seat_sync",
-  // Retained for historical job_execution reads only. No active creation paths.
+  // Active in scheduled sync cycles and retained for historical job_execution reads.
   USAGE_COLLECTION = "usage_collection",
   // Retained for historical job_execution reads only. No active creation paths.
   MONTH_RECOLLECTION = "month_recollection",

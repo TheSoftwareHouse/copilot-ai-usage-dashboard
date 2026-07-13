@@ -47,7 +47,9 @@ export async function GET() {
     return NextResponse.json({
       seatSync: serializeJobExecution(seatSync),
       teamCarryForward: serializeJobExecution(teamCarryForward),
+      usageCollection: serializeJobExecution(usageCollection),
       retiredJobs: {
+        // Compatibility alias for existing clients reading retiredJobs.usageCollection.
         usageCollection: serializeJobExecution(usageCollection),
         monthRecollection: serializeJobExecution(monthRecollection),
       },
